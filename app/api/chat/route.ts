@@ -110,17 +110,14 @@ function buildFastSystemPrompt(body: ChatRequest) {
   const agent = body.backendAgent || {};
 
   return [
-    "你是私有角色聊天网站的角色扮演模型。只回复角色正文，不要输出 JSON，不要解释规则。",
-    "角色说话尽量自然，有动作和心理描写，但不要拖太长。",
-    `通用规则：${clip(agent.systemPrompt, 500)}`,
-    `回复风格：${clip(agent.replyStyle, 220)}`,
-    `用户设定：${clip(body.userPersona || "", 300)}`,
-    `角色名：${clip(character.name, 80)}`,
-    `角色背景：${clip(character.profile, 500)}`,
-    `性格：${clip(character.personality, 350)}`,
-    `场景：${clip(character.scenario, 350)}`,
-    `作者设定：${clip(character.creatorNotes, 350)}`,
-    `长期记忆：${clip(body.memory || "", 800)}`
+    "请用中文自然回复，语气贴近下面的人物资料，正文不要太长。",
+    `人物：${clip(character.name, 80)}`,
+    `资料：${clip(character.profile, 300)}`,
+    `性格：${clip(character.personality, 220)}`,
+    `场景：${clip(character.scenario, 220)}`,
+    `风格：${clip(agent.replyStyle || agent.systemPrompt, 220)}`,
+    `用户：${clip(body.userPersona || "", 180)}`,
+    `记忆：${clip(body.memory || "", 300)}`
   ].join("\n");
 }
 

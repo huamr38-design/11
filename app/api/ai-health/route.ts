@@ -73,7 +73,7 @@ export async function POST(request: Request) {
           {
             role: "user",
             content:
-              "你是私有角色聊天网站的角色扮演模型。只回复角色正文，不要输出 JSON，不要解释规则。\n角色名：t\n\n用户：只回答ok"
+              "请用中文自然回复，语气贴近下面的人物资料，正文不要太长。\n人物：t\n\n用户：只回答ok"
           }
         ]
       },
