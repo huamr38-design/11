@@ -61,6 +61,23 @@ export async function POST(request: Request) {
       withV1(baseUrl, "/chat/completions"),
       { model, messages: [{ role: "user", content: "只回答 ok" }], max_tokens: 50 },
       apiKey
+    ),
+    probe(
+      "v1-chat-formal",
+      withV1(baseUrl, "/chat/completions"),
+      {
+        model,
+        temperature: 0.85,
+        max_tokens: 180,
+        messages: [
+          {
+            role: "user",
+            content:
+              "你是私有角色聊天网站的角色扮演模型。只回复角色正文，不要输出 JSON，不要解释规则。\n角色名：t\n\n用户：只回答ok"
+          }
+        ]
+      },
+      apiKey
     )
   ]);
 
