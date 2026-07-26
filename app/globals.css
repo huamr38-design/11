@@ -650,11 +650,18 @@ textarea {
 .xc-composer textarea {
   min-height: 48px;
   max-height: 120px;
+  resize: none;
+  outline: none;
+  overflow: hidden;
   border-color: var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.63);
   color: var(--text);
   backdrop-filter: blur(14px);
+}
+
+.xc-composer textarea:focus {
+  outline: none;
 }
 
 .xc-composer button,

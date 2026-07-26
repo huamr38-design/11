@@ -349,6 +349,18 @@ export default function Home() {
     setMemoryByCharacter((current) => ({ ...current, [activeCharacter.id]: next }));
   }
 
+  function setMessagesForCharacter(characterId: string, next: ChatMessage[]) {
+    setMessagesByCharacter((current) => ({ ...current, [characterId]: next }));
+  }
+
+  function setStatusForCharacter(characterId: string, next: StatusMap) {
+    setStatusByCharacter((current) => ({ ...current, [characterId]: next }));
+  }
+
+  function setMemoryForCharacter(characterId: string, next: string) {
+    setMemoryByCharacter((current) => ({ ...current, [characterId]: next }));
+  }
+
   function updateDirector(next: BackendAgent) {
     setDirector(next);
     saveAgentToServer(next, adminToken);
@@ -478,6 +490,51 @@ export default function Home() {
     localStorage.removeItem("currentToken");
   }
 
+  async function updateStatusAfterReply(args: {
+    characterId: string;
+    assistantMessageId: string;
+    character: CharacterCard;
+    userPersona: string;
+    userMessage: string;
+    assistantReply: string;
+    previousStatus: StatusMap;
+    memory: string;
+  }) {
+    try {
+      const response = await fetch("/api/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          character: compactCharacterForChat(args.character),
+          userPersona: args.userPersona,
+          userMessage: args.userMessage,
+          assistantReply: args.assistantReply,
+          previousStatus: args.previousStatus,
+          memory: args.memory
+        })
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data) return;
+
+      const statusUpdate = data.statusUpdate && Object.keys(data.statusUpdate).length ? data.statusUpdate : null;
+      const nextStatus = statusUpdate ? { ...args.previousStatus, ...statusUpdate } : args.previousStatus;
+      if (statusUpdate) {
+        setStatusForCharacter(args.characterId, nextStatus);
+        setMessagesByCharacter((current) => ({
+          ...current,
+          [args.characterId]: (current[args.characterId] || []).map((message) =>
+            message.id === args.assistantMessageId ? { ...message, statusSnapshot: nextStatus } : message
+          )
+        }));
+      }
+      if (data.memoryUpdate) {
+        setMemoryForCharacter(args.characterId, [args.memory, data.memoryUpdate].filter(Boolean).join("\n"));
+      }
+    } catch {
+      // 状态栏是后台增强，失败时不影响已经返回的聊天内容。
+    }
+  }
+
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
     const text = draft.trim();
@@ -485,8 +542,13 @@ export default function Home() {
 
     const userMessage: ChatMessage = { id: uid("message"), role: "user", content: text, createdAt: Date.now() };
     const nextMessages = [...messages, userMessage];
-    const requestCharacterId = activeCharacter.id;
-    setActiveMessages(nextMessages);
+    const requestCharacter = activeCharacter;
+    const requestCharacterId = requestCharacter.id;
+    const requestMessages = messages;
+    const requestStatus = visibleStatus;
+    const requestMemory = memory;
+    const requestUserPersona = userPersona;
+    setMessagesForCharacter(requestCharacterId, nextMessages);
     setDraft("");
     setBusyCharacterId(requestCharacterId);
     setError("");
@@ -496,12 +558,12 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          character: compactCharacterForChat(activeCharacter),
+          character: compactCharacterForChat(requestCharacter),
           backendAgent: compactDirectorForChat(director),
-          userPersona,
-          messages,
-          status: visibleStatus,
-          memory,
+          userPersona: requestUserPersona,
+          messages: requestMessages,
+          status: requestStatus,
+          memory: requestMemory,
           memoryLimit,
           userMessage: text
         })
@@ -509,20 +571,27 @@ export default function Home() {
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data.error || "请求失败");
 
-      const nextStatus = data.statusUpdate && Object.keys(data.statusUpdate).length ? { ...visibleStatus, ...data.statusUpdate } : visibleStatus;
       const assistantMessage: ChatMessage = {
         id: uid("message"),
         role: "assistant",
         content: data.reply || "“我在。”",
         createdAt: Date.now(),
-        statusSnapshot: nextStatus
+        statusSnapshot: requestStatus
       };
-      setActiveMessages([...nextMessages, assistantMessage]);
-      setActiveStatus(nextStatus);
-      if (data.memoryUpdate) setActiveMemory([memory, data.memoryUpdate].filter(Boolean).join("\n"));
+      setMessagesForCharacter(requestCharacterId, [...nextMessages, assistantMessage]);
+      void updateStatusAfterReply({
+        characterId: requestCharacterId,
+        assistantMessageId: assistantMessage.id,
+        character: requestCharacter,
+        userPersona: requestUserPersona,
+        userMessage: text,
+        assistantReply: assistantMessage.content,
+        previousStatus: requestStatus,
+        memory: requestMemory
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "发送失败");
-      setActiveMessages(messages);
+      setMessagesForCharacter(requestCharacterId, requestMessages);
     } finally {
       setBusyCharacterId((current) => (current === requestCharacterId ? "" : current));
     }
