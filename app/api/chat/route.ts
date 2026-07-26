@@ -233,9 +233,8 @@ export async function POST(request: Request) {
                 temperature,
                 max_tokens: maxTokens,
                 messages: [
-                  { role: "system", content: fastSystemPrompt },
                   ...recentMessages(body),
-                  { role: "user", content: clip(body.userMessage, 2000) }
+                  { role: "user", content: `${fastSystemPrompt}\n\n用户：${clip(body.userMessage, 2000)}` }
                 ]
               })
             },
