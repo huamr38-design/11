@@ -23,6 +23,10 @@ function hasSupabase() {
   return Boolean(supabaseUrl && supabaseKey);
 }
 
+function needsRemoteDatabase() {
+  return Boolean(process.env.VERCEL);
+}
+
 export function cleanUsername(user: string) {
   return user.trim().toLowerCase().replace(/[^a-z0-9_\-\u4e00-\u9fa5]/gi, "_").slice(0, 40);
 }
@@ -88,6 +92,7 @@ async function findRemoteUser(username: string) {
 export async function registerUser(rawUsername: string, password: string) {
   const username = cleanUsername(rawUsername);
   if (!username || password.length < 4) return { ok: false, error: "账号名或密码太短" };
+  if (!hasSupabase() && needsRemoteDatabase()) return { ok: false, error: "线上注册需要先配置 Supabase 数据库" };
 
   if (hasSupabase()) {
     const existing = await findRemoteUser(username);
@@ -114,6 +119,7 @@ export async function registerUser(rawUsername: string, password: string) {
 export async function loginUser(rawUsername: string, password: string) {
   const username = cleanUsername(rawUsername);
   if (!username || !password) return { ok: false, error: "请输入账号和密码" };
+  if (!hasSupabase() && needsRemoteDatabase()) return { ok: false, error: "线上登录需要先配置 Supabase 数据库" };
 
   if (hasSupabase()) {
     const user = await findRemoteUser(username);
@@ -151,6 +157,7 @@ export async function readUserState(username: string) {
 export async function saveUserState(username: string, state: UserState) {
   const safe = cleanUsername(username);
   if (!safe) throw new Error("user is required");
+  if (!hasSupabase() && needsRemoteDatabase()) throw new Error("remote database is required");
   const nextState = cleanState(state);
 
   if (hasSupabase()) {
