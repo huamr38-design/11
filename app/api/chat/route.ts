@@ -105,6 +105,25 @@ function buildSystemPrompt(body: ChatRequest) {
   ].join("\n");
 }
 
+function buildFastSystemPrompt(body: ChatRequest) {
+  const character = body.character || { name: "角色" };
+  const agent = body.backendAgent || {};
+
+  return [
+    "你是私有角色聊天网站的角色扮演模型。只回复角色正文，不要输出 JSON，不要解释规则。",
+    "角色说话尽量自然，有动作和心理描写，但不要拖太长。",
+    `通用规则：${clip(agent.systemPrompt, 500)}`,
+    `回复风格：${clip(agent.replyStyle, 220)}`,
+    `用户设定：${clip(body.userPersona || "", 300)}`,
+    `角色名：${clip(character.name, 80)}`,
+    `角色背景：${clip(character.profile, 500)}`,
+    `性格：${clip(character.personality, 350)}`,
+    `场景：${clip(character.scenario, 350)}`,
+    `作者设定：${clip(character.creatorNotes, 350)}`,
+    `长期记忆：${clip(body.memory || "", 800)}`
+  ].join("\n");
+}
+
 function recentMessages(body: ChatRequest) {
   return (body.messages || []).slice(-4).map((message) => ({
     role: message.role,
@@ -199,7 +218,7 @@ export async function POST(request: Request) {
                 temperature,
                 max_tokens: maxTokens,
                 messages: [
-                  { role: "system", content: buildSystemPrompt(body) },
+                  { role: "system", content: buildFastSystemPrompt(body) },
                   ...recentMessages(body),
                   { role: "user", content: clip(body.userMessage, 2000) }
                 ]
@@ -219,6 +238,10 @@ export async function POST(request: Request) {
     const data = await upstream.json();
     const content =
       wireApi === "responses" ? parseResponsesApiText(data) : data?.choices?.[0]?.message?.content || "";
+    if (wireApi === "chat") {
+      return NextResponse.json({ reply: content || "我在。", statusUpdate: {}, memoryUpdate: "" });
+    }
+
     const parsed = extractJson(content);
 
     if (!parsed) {
