@@ -185,7 +185,7 @@ export async function POST(request: Request) {
   const temperature = safeNumber(process.env.AI_TEMPERATURE, 0.85);
   const configuredWireApi = process.env.AI_WIRE_API || "chat";
   const wireApi = model?.toLowerCase().includes("grok") ? "chat" : configuredWireApi;
-  const maxTokens = Math.max(200, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 500)));
+  const maxTokens = Math.max(80, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 180)));
   const timeoutMs = Math.max(15000, Math.min(55000, safeNumber(process.env.AI_TIMEOUT_MS, 55000)));
   const fastSystemPrompt = buildFastSystemPrompt(body);
   const fullSystemPrompt = buildSystemPrompt(body);
