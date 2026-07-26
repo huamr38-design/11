@@ -82,6 +82,56 @@ textarea {
     linear-gradient(135deg, #d2f0ff 0%, #eefaff 55%, #dff4ff 100%);
 }
 
+.maintenance-page {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 30% 15%, rgba(255, 255, 255, 0.9), transparent 30%),
+    linear-gradient(135deg, #d2f0ff 0%, #eefaff 55%, #dff4ff 100%);
+}
+
+.maintenance-card {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: min(420px, 100%);
+  padding: 34px 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(248, 252, 255, 0.88);
+  box-shadow: 0 22px 60px rgba(44, 116, 162, 0.18);
+  text-align: center;
+  backdrop-filter: blur(18px);
+}
+
+.maintenance-card h1 {
+  margin: 6px 0 0;
+  font-size: 28px;
+}
+
+.maintenance-card p {
+  margin: 0 0 8px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.maintenance-shortcut {
+  grid-column: 2;
+  padding: 0 18px 12px;
+}
+
+.maintenance-shortcut button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  color: #147fbd;
+  font-weight: 700;
+}
+
 .xiangcao-shell.home-open {
   grid-template-columns: 370px minmax(0, 1fr);
   justify-content: stretch;
@@ -743,6 +793,32 @@ textarea {
   background: var(--theme-main);
   border-color: var(--theme-main);
   color: white;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.switch-row span {
+  display: grid;
+  gap: 4px;
+}
+
+.switch-row small {
+  color: var(--muted);
+}
+
+.switch-row input {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
 }
 
 .agent-photo-list {

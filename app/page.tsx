@@ -60,6 +60,11 @@ type BackgroundSettings = {
   opacity: number;
 };
 
+type MaintenanceSettings = {
+  enabled: boolean;
+  message: string;
+};
+
 const THEME = {
   name: "冰蓝",
   main: "#39a9e8"
@@ -111,6 +116,11 @@ const defaultBackground: BackgroundSettings = {
   color: "#edf8ff",
   imageUrl: "",
   opacity: 0.22
+};
+
+const defaultMaintenance: MaintenanceSettings = {
+  enabled: false,
+  message: "网站维护中，请稍后再来。"
 };
 
 function uid(prefix = "id") {
@@ -187,9 +197,12 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [adminToken, setAdminToken] = useState("");
   const [adminCode, setAdminCode] = useState("");
   const [adminError, setAdminError] = useState("");
-  const [panel, setPanel] = useState<"none" | "admin" | "persona" | "background" | "memory" | "character" | "agent" | "account">("none");
+  const [maintenance, setMaintenance] = useState<MaintenanceSettings>(defaultMaintenance);
+  const [maintenanceError, setMaintenanceError] = useState("");
+  const [panel, setPanel] = useState<"none" | "admin" | "persona" | "background" | "memory" | "character" | "agent" | "account" | "maintenance">("none");
   const [chatOpen, setChatOpen] = useState(false);
   const [homeMenuOpen, setHomeMenuOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState("");
@@ -219,7 +232,15 @@ export default function Home() {
     setLoginName(savedUser);
     setBackground(safeJsonParse(localStorage.getItem("chatBackground"), defaultBackground));
     const adminUnlocked = localStorage.getItem("adminUnlocked") === "yes";
+    const savedAdminToken = localStorage.getItem("adminToken") || "";
     setIsAdmin(adminUnlocked);
+    setAdminToken(savedAdminToken);
+    void fetch("/api/maintenance")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (data?.maintenance) setMaintenance(data.maintenance);
+      })
+      .catch(() => undefined);
     void fetch("/api/characters")
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
@@ -370,13 +391,37 @@ export default function Home() {
     }
     setIsAdmin(true);
     localStorage.setItem("adminUnlocked", "yes");
+    setAdminToken(adminCode);
+    localStorage.setItem("adminToken", adminCode);
     setAdminCode("");
     setPanel("none");
   }
 
   function logoutAdmin() {
     setIsAdmin(false);
+    setAdminToken("");
     localStorage.removeItem("adminUnlocked");
+    localStorage.removeItem("adminToken");
+  }
+
+  async function updateMaintenance(next: MaintenanceSettings) {
+    setMaintenanceError("");
+    if (!adminToken) {
+      setMaintenanceError("请先重新输入管理员密码。");
+      setPanel("admin");
+      return;
+    }
+    const response = await fetch("/api/maintenance", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "x-admin-code": adminToken },
+      body: JSON.stringify({ maintenance: next })
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      setMaintenanceError(data?.error || "维护模式保存失败");
+      return;
+    }
+    setMaintenance(data.maintenance);
   }
 
   async function loginAccount(event: FormEvent) {
@@ -462,6 +507,28 @@ export default function Home() {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (maintenance.enabled && !isAdmin) {
+    return (
+      <main className="maintenance-page">
+        <section className="maintenance-card">
+          <div className="xc-logo"><Sparkles size={22} /></div>
+          <h1>网站维护中</h1>
+          <p>{maintenance.message}</p>
+          <button type="button" onClick={() => setPanel("admin")}><Lock size={16} />管理员入口</button>
+        </section>
+        {panel === "admin" && (
+          <EditorModal title="管理员登录" onClose={() => setPanel("none")}>
+            <form onSubmit={verifyAdmin} className="modal-stack">
+              <label>管理员密码<input type="password" value={adminCode} onChange={(event) => setAdminCode(event.target.value)} /></label>
+              {adminError && <div className="mini-error">{adminError}</div>}
+              <button className="primary"><Lock size={16} />进入管理员模式</button>
+            </form>
+          </EditorModal>
+        )}
+      </main>
+    );
   }
 
   return (
@@ -553,6 +620,15 @@ export default function Home() {
             <button type="button" onClick={() => setPanel("admin")}><Lock size={16} />管理员入口</button>
           )}
         </div>
+
+        {isAdmin && (
+          <div className="maintenance-shortcut">
+            <button type="button" onClick={() => setPanel("maintenance")}>
+              <ShieldCheck size={16} />
+              维护模式：{maintenance.enabled ? "开启" : "关闭"}
+            </button>
+          </div>
+        )}
 
         <div className="role-card-list">
           {characters.map((character) => (
@@ -674,6 +750,14 @@ export default function Home() {
           {panel === "persona" && <PersonaEditor value={userPersona} setValue={setUserPersona} onDone={() => setPanel("none")} />}
           {panel === "background" && <BackgroundEditor background={background} setBackground={setBackground} onDone={() => setPanel("none")} />}
           {panel === "memory" && <MemoryEditor value={memory} setValue={setActiveMemory} limit={memoryLimit} setLimit={setMemoryLimit} onDone={() => setPanel("none")} />}
+          {panel === "maintenance" && isAdmin && (
+            <MaintenanceEditor
+              value={maintenance}
+              error={maintenanceError}
+              onSave={updateMaintenance}
+              onDone={() => setPanel("none")}
+            />
+          )}
           {panel === "agent" && isAdmin && (
             <AgentEditor
               value={director}
@@ -720,6 +804,54 @@ function EditorModal({ title, children, onClose }: { title: string; children: Re
         {children}
       </div>
     </div>
+  );
+}
+
+function MaintenanceEditor({
+  value,
+  error,
+  onSave,
+  onDone
+}: {
+  value: MaintenanceSettings;
+  error: string;
+  onSave: (value: MaintenanceSettings) => Promise<void>;
+  onDone: () => void;
+}) {
+  const [draft, setDraft] = useState<MaintenanceSettings>(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    await onSave(draft);
+  }
+
+  return (
+    <form className="modal-stack" onSubmit={submit}>
+      <div className="editor-hint">
+        开启后，普通用户只能看到维护页，不能进入聊天。管理员仍可进入后台关闭维护模式。
+      </div>
+      <label className="switch-row">
+        <span>
+          <strong>维护模式</strong>
+          <small>{draft.enabled ? "当前开启，用户不可聊天" : "当前关闭，用户可正常访问"}</small>
+        </span>
+        <input
+          type="checkbox"
+          checked={draft.enabled}
+          onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })}
+        />
+      </label>
+      <label>维护提示<textarea value={draft.message} onChange={(event) => setDraft({ ...draft, message: event.target.value })} /></label>
+      {error && <div className="mini-error">{error}</div>}
+      <div className="modal-actions-row">
+        <button className="primary" type="submit"><Save size={16} />保存开关</button>
+        <button type="button" onClick={onDone}>完成</button>
+      </div>
+    </form>
   );
 }
 
