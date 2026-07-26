@@ -152,18 +152,18 @@ function migrateOneCharacter(value: unknown) {
   return [maybe];
 }
 
-function saveCharactersToServer(characters: CharacterCard[]) {
+function saveCharactersToServer(characters: CharacterCard[], adminToken = "") {
   void fetch("/api/characters", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-admin-code": adminToken },
     body: JSON.stringify({ characters })
   }).catch(() => undefined);
 }
 
-function saveAgentToServer(agent: BackendAgent) {
+function saveAgentToServer(agent: BackendAgent, adminToken = "") {
   void fetch("/api/agent", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-admin-code": adminToken },
     body: JSON.stringify({ agent })
   }).catch(() => undefined);
 }
@@ -245,14 +245,14 @@ export default function Home() {
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
         if (!data?.characters?.length) {
-          saveCharactersToServer(nextCharacters);
+          if (adminUnlocked && savedAdminToken) saveCharactersToServer(nextCharacters, savedAdminToken);
           return;
         }
         const serverCharacters = data.characters as CharacterCard[];
         const serverLooksDefault = serverCharacters.length === 1 && serverCharacters[0].id === starterCharacters[0].id;
         const localLooksCustom = JSON.stringify(nextCharacters) !== JSON.stringify(starterCharacters);
         if (adminUnlocked && serverLooksDefault && localLooksCustom) {
-          saveCharactersToServer(nextCharacters);
+          if (savedAdminToken) saveCharactersToServer(nextCharacters, savedAdminToken);
           return;
         }
         setCharacters(serverCharacters);
@@ -268,7 +268,7 @@ export default function Home() {
           setDirector(data.agent);
           return;
         }
-        saveAgentToServer(safeJsonParse(localStorage.getItem("fixedDirector"), fixedDirector));
+        if (adminUnlocked && savedAdminToken) saveAgentToServer(safeJsonParse(localStorage.getItem("fixedDirector"), fixedDirector), savedAdminToken);
       })
       .catch(() => undefined);
   }, []);
@@ -335,7 +335,7 @@ export default function Home() {
 
   function updateDirector(next: BackendAgent) {
     setDirector(next);
-    saveAgentToServer(next);
+    saveAgentToServer(next, adminToken);
   }
 
   function createCharacter() {
@@ -352,7 +352,7 @@ export default function Home() {
     };
     setCharacters((current) => {
       const next = [character, ...current];
-      saveCharactersToServer(next);
+      saveCharactersToServer(next, adminToken);
       return next;
     });
     setActiveCharacterId(character.id);
@@ -363,7 +363,7 @@ export default function Home() {
   function updateCharacter(next: CharacterCard) {
     setCharacters((current) => {
       const nextCharacters = current.map((item) => (item.id === next.id ? next : item));
-      saveCharactersToServer(nextCharacters);
+      saveCharactersToServer(nextCharacters, adminToken);
       return nextCharacters;
     });
   }
@@ -371,7 +371,7 @@ export default function Home() {
   function deleteActiveCharacter() {
     if (characters.length <= 1) return;
     const nextCharacters = characters.filter((item) => item.id !== activeCharacter.id);
-    saveCharactersToServer(nextCharacters);
+    saveCharactersToServer(nextCharacters, adminToken);
     setCharacters(nextCharacters);
     setActiveCharacterId(nextCharacters[0].id);
     setPanel("none");

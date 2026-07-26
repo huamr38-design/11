@@ -1,6 +1,5 @@
-import { promises as fs } from "fs";
-import path from "path";
 import { NextResponse } from "next/server";
+import { isAdminRequest, readGlobalConfig, saveGlobalConfig } from "../../lib/globalConfigStore";
 
 type CharacterCard = {
   id: string;
@@ -14,16 +13,9 @@ type CharacterCard = {
   worldBook: string;
 };
 
-const storePath = path.join(process.cwd(), "data", "characters.json");
-
 async function readCharacters() {
-  try {
-    const text = await fs.readFile(storePath, "utf8");
-    const parsed = JSON.parse(text) as CharacterCard[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  const parsed = await readGlobalConfig<CharacterCard[]>("characters");
+  return Array.isArray(parsed) ? parsed : [];
 }
 
 function cleanCharacter(value: Partial<CharacterCard> & Record<string, unknown>): CharacterCard | null {
@@ -50,6 +42,10 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  if (!isAdminRequest(request)) {
+    return NextResponse.json({ error: "admin password is invalid" }, { status: 401 });
+  }
+
   const body = await request.json().catch(() => null);
   const incoming = Array.isArray(body?.characters) ? body.characters : [];
   const characters = incoming.map(cleanCharacter).filter(Boolean) as CharacterCard[];
@@ -58,7 +54,6 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "characters is empty" }, { status: 400 });
   }
 
-  await fs.mkdir(path.dirname(storePath), { recursive: true });
-  await fs.writeFile(storePath, JSON.stringify(characters, null, 2), "utf8");
+  await saveGlobalConfig("characters", characters);
   return NextResponse.json({ ok: true, characters });
 }
