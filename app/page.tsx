@@ -393,6 +393,8 @@ export default function Home() {
     localStorage.setItem("adminUnlocked", "yes");
     setAdminToken(adminCode);
     localStorage.setItem("adminToken", adminCode);
+    if (characters.length) saveCharactersToServer(characters, adminCode);
+    saveAgentToServer(fixedDirector, adminCode);
     setAdminCode("");
     setPanel("none");
   }
