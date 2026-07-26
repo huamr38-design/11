@@ -183,6 +183,21 @@ function saveUserStateToServer(user: string, state: {
   }).catch(() => undefined);
 }
 
+function compactCharacterForChat(character: CharacterCard) {
+  const { avatarUrl, ...textOnlyCharacter } = character;
+  return textOnlyCharacter;
+}
+
+function compactDirectorForChat(agent: BackendAgent) {
+  return {
+    ...agent,
+    photos: (agent.photos || []).map((photo) => ({
+      ...photo,
+      url: photo.url?.startsWith("data:") ? "" : photo.url
+    }))
+  };
+}
+
 export default function Home() {
   const [characters, setCharacters] = useState<CharacterCard[]>(starterCharacters);
   const [activeCharacterId, setActiveCharacterId] = useState(starterCharacters[0].id);
@@ -479,8 +494,8 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          character: activeCharacter,
-          backendAgent: director,
+          character: compactCharacterForChat(activeCharacter),
+          backendAgent: compactDirectorForChat(director),
           userPersona,
           messages,
           status: visibleStatus,
@@ -489,7 +504,7 @@ export default function Home() {
           userMessage: text
         })
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data.error || "请求失败");
 
       const nextStatus = data.statusUpdate && Object.keys(data.statusUpdate).length ? { ...visibleStatus, ...data.statusUpdate } : visibleStatus;
