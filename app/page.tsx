@@ -209,7 +209,7 @@ export default function Home() {
   const [userPersona, setUserPersona] = useState("");
   const [background, setBackground] = useState<BackgroundSettings>(defaultBackground);
   const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busyCharacterId, setBusyCharacterId] = useState("");
   const [error, setError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminToken, setAdminToken] = useState("");
@@ -335,6 +335,7 @@ export default function Home() {
   const messages = messagesByCharacter[activeCharacter.id] || [];
   const visibleStatus = { ...defaultStatus, ...(statusByCharacter[activeCharacter.id] || {}) };
   const memory = memoryByCharacter[activeCharacter.id] || "";
+  const busy = busyCharacterId === activeCharacter.id;
 
   function setActiveMessages(next: ChatMessage[]) {
     setMessagesByCharacter((current) => ({ ...current, [activeCharacter.id]: next }));
@@ -484,9 +485,10 @@ export default function Home() {
 
     const userMessage: ChatMessage = { id: uid("message"), role: "user", content: text, createdAt: Date.now() };
     const nextMessages = [...messages, userMessage];
+    const requestCharacterId = activeCharacter.id;
     setActiveMessages(nextMessages);
     setDraft("");
-    setBusy(true);
+    setBusyCharacterId(requestCharacterId);
     setError("");
 
     try {
@@ -522,7 +524,7 @@ export default function Home() {
       setError(err instanceof Error ? err.message : "发送失败");
       setActiveMessages(messages);
     } finally {
-      setBusy(false);
+      setBusyCharacterId((current) => (current === requestCharacterId ? "" : current));
     }
   }
 
