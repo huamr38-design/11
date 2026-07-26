@@ -178,7 +178,6 @@ export async function POST(request: Request) {
               body: JSON.stringify({
                 model,
                 temperature,
-                max_output_tokens: maxTokens,
                 input: buildConversationText(body)
               })
             },
