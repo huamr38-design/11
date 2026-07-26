@@ -160,7 +160,8 @@ export async function POST(request: Request) {
   const baseUrl = (rawBaseUrl || "").replace(/\/$/, "");
   const temperature = safeNumber(process.env.AI_TEMPERATURE, 0.85);
   const wireApi = process.env.AI_WIRE_API || "chat";
-  const maxTokens = Math.max(300, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 1200)));
+  const maxTokens = Math.max(300, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 900)));
+  const timeoutMs = Math.max(15000, Math.min(55000, safeNumber(process.env.AI_TIMEOUT_MS, 55000)));
 
   if (!apiKey || !baseUrl || !model) {
     return NextResponse.json({ error: "还没有配置模型 API，请检查 Vercel 环境变量。" }, { status: 500 });
@@ -181,7 +182,7 @@ export async function POST(request: Request) {
                 input: buildConversationText(body)
               })
             },
-            28000
+            timeoutMs
           )
         : await fetchWithTimeout(
             `${baseUrl}/chat/completions`,
@@ -199,7 +200,7 @@ export async function POST(request: Request) {
                 ]
               })
             },
-            28000
+            timeoutMs
           );
 
     if (!upstream.ok) {
