@@ -187,9 +187,24 @@ export async function POST(request: Request) {
   const wireApi = model?.toLowerCase().includes("grok") ? "chat" : configuredWireApi;
   const maxTokens = Math.max(200, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 500)));
   const timeoutMs = Math.max(15000, Math.min(55000, safeNumber(process.env.AI_TIMEOUT_MS, 55000)));
+  const fastSystemPrompt = buildFastSystemPrompt(body);
+  const fullSystemPrompt = buildSystemPrompt(body);
 
   if (!apiKey || !baseUrl || !model) {
     return NextResponse.json({ error: "还没有配置模型 API，请检查 Vercel 环境变量。" }, { status: 500 });
+  }
+
+  if (request.headers.get("x-chat-debug") === "1") {
+    return NextResponse.json({
+      model,
+      wireApi,
+      baseHost: new URL(baseUrl).host,
+      fastPromptChars: fastSystemPrompt.length,
+      fullPromptChars: fullSystemPrompt.length,
+      historyCount: recentMessages(body).length,
+      maxTokens,
+      timeoutMs
+    });
   }
 
   try {
@@ -218,7 +233,7 @@ export async function POST(request: Request) {
                 temperature,
                 max_tokens: maxTokens,
                 messages: [
-                  { role: "system", content: buildFastSystemPrompt(body) },
+                  { role: "system", content: fastSystemPrompt },
                   ...recentMessages(body),
                   { role: "user", content: clip(body.userMessage, 2000) }
                 ]
