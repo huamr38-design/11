@@ -92,6 +92,37 @@ function normalizeStatus(value: unknown) {
   return next;
 }
 
+function clampPercent(value: unknown, fallback: number, delta: number) {
+  const base = typeof value === "number" ? value : fallback;
+  return Math.max(0, Math.min(100, Math.round(base + delta)));
+}
+
+function fallbackStatus(body: StatusRequest) {
+  const previous = body.previousStatus || {};
+  const combined = `${body.userMessage || ""}\n${body.assistantReply || ""}`;
+  const intensity = Math.min(10, Math.max(2, Math.ceil(combined.length / 80)));
+  const warmWords = /喜欢|想|靠近|抱|亲|害羞|脸红|紧张|心跳|温柔|暧昧/.test(combined);
+  const calmWords = /你好|在吗|吃饭|工作|今天|聊天|普通|随便/.test(combined);
+  const delta = warmWords ? intensity : calmWords ? 1 : Math.max(1, Math.floor(intensity / 2));
+
+  return {
+    当前阶段: String(previous.当前阶段 || "持续交流"),
+    调戏兴致: clampPercent(previous.调戏兴致, 35, delta),
+    脸红度: clampPercent(previous.脸红度, 20, warmWords ? delta : 1),
+    身体燥热: clampPercent(previous.身体燥热, 10, warmWords ? Math.ceil(delta / 2) : 0),
+    隐秘湿润: clampPercent(previous.隐秘湿润, 5, warmWords ? Math.ceil(delta / 3) : 0),
+    禁忌感: clampPercent(previous.禁忌感, 15, Math.max(0, Math.floor(delta / 3))),
+    涵湿状态: String(previous.涵湿状态 || "房间内/不在场"),
+    衣衫完整度: clampPercent(previous.衣衫完整度, 95, 0),
+    当前位置: String(previous.当前位置 || body.character?.scenario || "聊天中").slice(0, 40),
+    心理状态: warmWords ? "有些动摇，继续观察" : "专注回应，等待下文",
+    语气: warmWords ? "放轻，带一点迟疑" : "自然，低声",
+    眼神: warmWords ? "微微闪躲，又忍不住看你" : "专注，带着笑意",
+    当前穿着: String(previous.当前穿着 || "日常服装"),
+    身体反应: warmWords ? "呼吸略乱" : "呼吸平稳"
+  };
+}
+
 export async function POST(request: Request) {
   const body = (await request.json()) as StatusRequest;
   const apiKey = process.env.AI_API_KEY;
@@ -102,7 +133,7 @@ export async function POST(request: Request) {
   const timeoutMs = Math.max(6000, Math.min(15000, safeNumber(process.env.AI_STATUS_TIMEOUT_MS, 12000)));
 
   if (!apiKey || !baseUrl || !model) {
-    return NextResponse.json({ statusUpdate: {}, memoryUpdate: "" });
+    return NextResponse.json({ statusUpdate: fallbackStatus(body), memoryUpdate: "" });
   }
 
   try {
@@ -122,21 +153,22 @@ export async function POST(request: Request) {
     );
 
     if (!upstream.ok) {
-      return NextResponse.json({ statusUpdate: {}, memoryUpdate: "" });
+      return NextResponse.json({ statusUpdate: fallbackStatus(body), memoryUpdate: "" });
     }
 
     const data = await upstream.json();
     const content = data?.choices?.[0]?.message?.content || "";
     const parsed = extractJson(content) as { status_update?: unknown; statusUpdate?: unknown; memory_update?: unknown; memoryUpdate?: unknown } | null;
     if (!parsed) {
-      return NextResponse.json({ statusUpdate: {}, memoryUpdate: "" });
+      return NextResponse.json({ statusUpdate: fallbackStatus(body), memoryUpdate: "" });
     }
+    const statusUpdate = normalizeStatus(parsed.status_update || parsed.statusUpdate);
 
     return NextResponse.json({
-      statusUpdate: normalizeStatus(parsed.status_update || parsed.statusUpdate),
+      statusUpdate: Object.keys(statusUpdate).length ? statusUpdate : fallbackStatus(body),
       memoryUpdate: clip(parsed.memory_update || parsed.memoryUpdate || "", 500)
     });
   } catch {
-    return NextResponse.json({ statusUpdate: {}, memoryUpdate: "" });
+    return NextResponse.json({ statusUpdate: fallbackStatus(body), memoryUpdate: "" });
   }
 }
