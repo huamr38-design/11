@@ -164,11 +164,11 @@ function saveUserStateToServer(user: string, state: {
   memoryByCharacter: Record<string, string>;
   userPersona: string;
   memoryLimit: number;
-}) {
-  if (!user.trim()) return;
+}, token: string) {
+  if (!user.trim() || !token) return;
   void fetch("/api/user-state", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ user, state })
   }).catch(() => undefined);
 }
@@ -193,7 +193,11 @@ export default function Home() {
   const [chatOpen, setChatOpen] = useState(false);
   const [homeMenuOpen, setHomeMenuOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState("");
+  const [currentToken, setCurrentToken] = useState("");
   const [loginName, setLoginName] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [accountMode, setAccountMode] = useState<"login" | "register">("login");
+  const [accountError, setAccountError] = useState("");
   const [accountReady, setAccountReady] = useState(false);
 
   useEffect(() => {
@@ -209,7 +213,9 @@ export default function Home() {
     setMemoryLimit(Number(localStorage.getItem("memoryLimit") || "7000"));
     setUserPersona(localStorage.getItem("userPersona") || "");
     const savedUser = localStorage.getItem("currentUser") || "";
+    const savedToken = localStorage.getItem("currentToken") || "";
     setCurrentUser(savedUser);
+    setCurrentToken(savedToken);
     setLoginName(savedUser);
     setBackground(safeJsonParse(localStorage.getItem("chatBackground"), defaultBackground));
     const adminUnlocked = localStorage.getItem("adminUnlocked") === "yes";
@@ -257,13 +263,14 @@ export default function Home() {
   useEffect(() => localStorage.setItem("chatBackground", JSON.stringify(background)), [background]);
 
   useEffect(() => {
-    if (!currentUser) {
+    if (!currentUser || !currentToken) {
       setAccountReady(false);
       return;
     }
     localStorage.setItem("currentUser", currentUser);
+    localStorage.setItem("currentToken", currentToken);
     setAccountReady(false);
-    void fetch(`/api/user-state?user=${encodeURIComponent(currentUser)}`)
+    void fetch("/api/user-state", { headers: { Authorization: `Bearer ${currentToken}` } })
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
         const state = data?.state;
@@ -277,12 +284,12 @@ export default function Home() {
         setAccountReady(true);
       })
       .catch(() => setAccountReady(true));
-  }, [currentUser]);
+  }, [currentUser, currentToken]);
 
   useEffect(() => {
-    if (!currentUser || !accountReady) return;
-    saveUserStateToServer(currentUser, { messagesByCharacter, statusByCharacter, memoryByCharacter, userPersona, memoryLimit });
-  }, [currentUser, accountReady, messagesByCharacter, statusByCharacter, memoryByCharacter, userPersona, memoryLimit]);
+    if (!currentUser || !currentToken || !accountReady) return;
+    saveUserStateToServer(currentUser, { messagesByCharacter, statusByCharacter, memoryByCharacter, userPersona, memoryLimit }, currentToken);
+  }, [currentUser, currentToken, accountReady, messagesByCharacter, statusByCharacter, memoryByCharacter, userPersona, memoryLimit]);
 
   const activeCharacter = useMemo(
     () => characters.find((item) => item.id === activeCharacterId) || characters[0],
@@ -372,23 +379,40 @@ export default function Home() {
     localStorage.removeItem("adminUnlocked");
   }
 
-  function loginAccount(event: FormEvent) {
+  async function loginAccount(event: FormEvent) {
     event.preventDefault();
     const name = loginName.trim();
-    if (!name) return;
-    setCurrentUser(name);
+    if (!name || !loginPassword) return;
+    setAccountError("");
+    const response = await fetch("/api/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: accountMode, username: name, password: loginPassword })
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      setAccountError(data?.error || "账号处理失败");
+      return;
+    }
+    setCurrentUser(data.user);
+    setCurrentToken(data.token);
+    setLoginPassword("");
     setPanel("none");
   }
 
   function logoutAccount() {
     setCurrentUser("");
+    setCurrentToken("");
     setLoginName("");
+    setLoginPassword("");
+    setAccountError("");
     setAccountReady(false);
     setMessagesByCharacter({});
     setStatusByCharacter({});
     setMemoryByCharacter({});
     setUserPersona("");
     localStorage.removeItem("currentUser");
+    localStorage.removeItem("currentToken");
   }
 
   async function sendMessage(event: FormEvent) {
@@ -634,10 +658,15 @@ export default function Home() {
             </form>
           )}
           {panel === "account" && (
-            <AccountEditor
+            <AccountEditorV2
               currentUser={currentUser}
               loginName={loginName}
               setLoginName={setLoginName}
+              loginPassword={loginPassword}
+              setLoginPassword={setLoginPassword}
+              accountMode={accountMode}
+              setAccountMode={setAccountMode}
+              accountError={accountError}
               onLogin={loginAccount}
               onLogout={logoutAccount}
             />
@@ -691,6 +720,50 @@ function EditorModal({ title, children, onClose }: { title: string; children: Re
         {children}
       </div>
     </div>
+  );
+}
+
+function AccountEditorV2({
+  currentUser,
+  loginName,
+  setLoginName,
+  loginPassword,
+  setLoginPassword,
+  accountMode,
+  setAccountMode,
+  accountError,
+  onLogin,
+  onLogout
+}: {
+  currentUser: string;
+  loginName: string;
+  setLoginName: (value: string) => void;
+  loginPassword: string;
+  setLoginPassword: (value: string) => void;
+  accountMode: "login" | "register";
+  setAccountMode: (value: "login" | "register") => void;
+  accountError: string;
+  onLogin: (event: FormEvent) => void;
+  onLogout: () => void;
+}) {
+  return (
+    <form className="modal-stack" onSubmit={onLogin}>
+      <div className="editor-hint">
+        先注册账号，再登录使用。同一个账号在不同设备登录后，会读取同一份聊天记录、记忆和我的设定。
+      </div>
+      {currentUser && <div className="account-badge">当前账号：{currentUser}</div>}
+      <div className="mode-switch">
+        <button type="button" className={accountMode === "login" ? "active" : ""} onClick={() => setAccountMode("login")}>登录</button>
+        <button type="button" className={accountMode === "register" ? "active" : ""} onClick={() => setAccountMode("register")}>注册</button>
+      </div>
+      <label>账号名<input value={loginName} onChange={(event) => setLoginName(event.target.value)} placeholder="例如：test01 或你的昵称" /></label>
+      <label>密码<input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} placeholder="至少 4 位" /></label>
+      {accountError && <div className="mini-error">{accountError}</div>}
+      <div className="modal-actions-row">
+        <button className="primary" type="submit"><UserCircle size={16} />{accountMode === "login" ? "登录" : "注册并登录"}</button>
+        <button className="danger-button" type="button" disabled={!currentUser} onClick={onLogout}>退出账号</button>
+      </div>
+    </form>
   );
 }
 

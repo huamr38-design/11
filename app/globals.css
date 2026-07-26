@@ -724,6 +724,27 @@ textarea {
   font-weight: 700;
 }
 
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.mode-switch button {
+  border: 1px solid rgba(57, 169, 232, 0.28);
+  background: rgba(255, 255, 255, 0.78);
+  color: #24566d;
+  border-radius: 8px;
+  padding: 10px;
+  font-weight: 700;
+}
+
+.mode-switch button.active {
+  background: var(--theme-main);
+  border-color: var(--theme-main);
+  color: white;
+}
+
 .agent-photo-list {
   display: grid;
   gap: 10px;

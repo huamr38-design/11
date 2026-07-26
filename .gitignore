@@ -3,4 +3,3 @@ node_modules
 .env.local
 .env
 *.log
-data/users
