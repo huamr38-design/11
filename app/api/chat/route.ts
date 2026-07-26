@@ -142,6 +142,11 @@ function parseResponsesApiText(data: unknown) {
   );
 }
 
+function chatCompletionsUrl(baseUrl: string) {
+  if (baseUrl.endsWith("/v1")) return `${baseUrl}/chat/completions`;
+  return `${baseUrl}/v1/chat/completions`;
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -159,7 +164,8 @@ export async function POST(request: Request) {
   const model = process.env.AI_MODEL;
   const baseUrl = (rawBaseUrl || "").replace(/\/$/, "");
   const temperature = safeNumber(process.env.AI_TEMPERATURE, 0.85);
-  const wireApi = process.env.AI_WIRE_API || "chat";
+  const configuredWireApi = process.env.AI_WIRE_API || "chat";
+  const wireApi = model?.toLowerCase().includes("grok") ? "chat" : configuredWireApi;
   const maxTokens = Math.max(300, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 900)));
   const timeoutMs = Math.max(15000, Math.min(55000, safeNumber(process.env.AI_TIMEOUT_MS, 55000)));
 
@@ -184,7 +190,7 @@ export async function POST(request: Request) {
             timeoutMs
           )
         : await fetchWithTimeout(
-            `${baseUrl}/chat/completions`,
+            chatCompletionsUrl(baseUrl),
             {
               method: "POST",
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
