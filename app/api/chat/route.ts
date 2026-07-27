@@ -50,6 +50,9 @@ type ChatTiming = {
   serverTotalMs?: number;
   upstreamStatus?: number;
   errorName?: string;
+  fallbackUsed?: boolean;
+  fallbackMs?: number;
+  fallbackErrorName?: string;
 };
 
 function clip(value: unknown, limit: number) {
@@ -132,6 +135,19 @@ function buildFastSystemPrompt(body: ChatRequest) {
   ].join("\n");
 }
 
+function buildRescueSystemPrompt(body: ChatRequest) {
+  const character = body.character || { name: "角色" };
+  const agent = body.backendAgent || {};
+
+  return [
+    "中文角色聊天，快速回复，不要解释规则，不要总结。",
+    `角色：${clip(character.name, 40)}`,
+    `核心：${clip(character.profile || character.personality || "", 160)}`,
+    `场景：${clip(character.scenario || "", 120)}`,
+    `风格：${clip(agent.replyStyle || agent.systemPrompt || "", 120)}`
+  ].join("\n");
+}
+
 function recentMessages(body: ChatRequest) {
   return (body.messages || []).slice(-4).map((message) => ({
     role: message.role,
@@ -184,6 +200,14 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
+function chatRequestInit(apiKey: string, body: string): RequestInit {
+  return {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body
+  };
+}
+
 export async function POST(request: Request) {
   const serverStart = Date.now();
   const body = (await request.json()) as ChatRequest;
@@ -196,6 +220,8 @@ export async function POST(request: Request) {
   const wireApi = model?.toLowerCase().includes("grok") ? "chat" : configuredWireApi;
   const maxTokens = Math.max(80, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 180)));
   const timeoutMs = Math.max(15000, Math.min(55000, safeNumber(process.env.AI_TIMEOUT_MS, 55000)));
+  const primaryTimeoutMs = Math.min(timeoutMs, 32000);
+  const rescueTimeoutMs = Math.min(18000, Math.max(8000, timeoutMs - primaryTimeoutMs));
   const fastSystemPrompt = buildFastSystemPrompt(body);
   const fullSystemPrompt = buildSystemPrompt(body);
   const timing: ChatTiming = {
@@ -217,7 +243,9 @@ export async function POST(request: Request) {
       fullPromptChars: fullSystemPrompt.length,
       historyCount: recentMessages(body).length,
       maxTokens,
-      timeoutMs
+      timeoutMs,
+      primaryTimeoutMs,
+      rescueTimeoutMs
     });
   }
 
@@ -240,26 +268,51 @@ export async function POST(request: Request) {
             ]
           });
     timing.requestBytes = new TextEncoder().encode(upstreamBody).length;
-    const upstream =
-      wireApi === "responses"
-        ? await fetchWithTimeout(
-            `${baseUrl}/responses`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-              body: upstreamBody
-            },
-            timeoutMs
-          )
-        : await fetchWithTimeout(
-            chatCompletionsUrl(baseUrl),
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-              body: upstreamBody
-            },
-            timeoutMs
-          );
+    let upstream: Response;
+    try {
+      upstream =
+        wireApi === "responses"
+          ? await fetchWithTimeout(
+              `${baseUrl}/responses`,
+              chatRequestInit(apiKey, upstreamBody),
+              primaryTimeoutMs
+            )
+          : await fetchWithTimeout(
+              chatCompletionsUrl(baseUrl),
+              chatRequestInit(apiKey, upstreamBody),
+              primaryTimeoutMs
+            );
+    } catch (primaryError) {
+      const primaryTimedOut = primaryError instanceof Error && primaryError.name === "AbortError";
+      if (!primaryTimedOut || wireApi !== "chat") throw primaryError;
+
+      timing.fallbackUsed = true;
+      timing.errorName = primaryError.name;
+      const fallbackStart = Date.now();
+      const rescuePrompt = buildRescueSystemPrompt(body);
+      const rescueBody = JSON.stringify({
+        model,
+        temperature,
+        max_tokens: Math.min(120, maxTokens),
+        messages: [
+          ...recentMessages(body).slice(-2),
+          { role: "user", content: `${rescuePrompt}\n\n用户：${clip(body.userMessage, 1000)}` }
+        ]
+      });
+      timing.requestBytes = new TextEncoder().encode(rescueBody).length;
+      try {
+        upstream = await fetchWithTimeout(
+          chatCompletionsUrl(baseUrl),
+          chatRequestInit(apiKey, rescueBody),
+          rescueTimeoutMs
+        );
+        timing.fallbackMs = Date.now() - fallbackStart;
+      } catch (fallbackError) {
+        timing.fallbackMs = Date.now() - fallbackStart;
+        timing.fallbackErrorName = fallbackError instanceof Error ? fallbackError.name : "UnknownError";
+        throw fallbackError;
+      }
+    }
     timing.upstreamMs = Date.now() - upstreamStart;
     timing.upstreamStatus = upstream.status;
 
