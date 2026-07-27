@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isAdminRequest } from "../../lib/globalConfigStore";
 
 export const runtime = "nodejs";
+export const preferredRegion = "iad1";
 export const maxDuration = 60;
 
 function withV1(baseUrl: string, path: string) {

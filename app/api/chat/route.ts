@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+export const preferredRegion = "iad1";
 export const maxDuration = 60;
 
 type ChatMessage = {
