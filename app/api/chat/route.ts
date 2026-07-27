@@ -224,8 +224,8 @@ export async function POST(request: Request) {
   const wireApi = model?.toLowerCase().includes("grok") ? "chat" : configuredWireApi;
   const maxTokens = Math.max(80, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 180)));
   const timeoutMs = Math.max(15000, Math.min(55000, safeNumber(process.env.AI_TIMEOUT_MS, 55000)));
-  const primaryTimeoutMs = Math.min(timeoutMs, 32000);
-  const rescueTimeoutMs = Math.min(18000, Math.max(8000, timeoutMs - primaryTimeoutMs));
+  const primaryTimeoutMs = timeoutMs;
+  const rescueTimeoutMs = 10000;
   const fastSystemPrompt = buildFastSystemPrompt(body);
   const fullSystemPrompt = buildSystemPrompt(body);
   const timing: ChatTiming = {
@@ -285,38 +285,12 @@ export async function POST(request: Request) {
           : await fetchWithTimeout(
               chatCompletionsUrl(baseUrl),
               chatRequestInit(apiKey, upstreamBody),
-              primaryTimeoutMs
-            );
+            primaryTimeoutMs
+          );
     } catch (primaryError) {
       const primaryTimedOut = primaryError instanceof Error && primaryError.name === "AbortError";
-      if (!primaryTimedOut || wireApi !== "chat") throw primaryError;
-
-      timing.fallbackUsed = true;
-      timing.errorName = primaryError.name;
-      const fallbackStart = Date.now();
-      const rescuePrompt = buildRescueSystemPrompt(body);
-      rescueBody = JSON.stringify({
-        model,
-        temperature,
-        max_tokens: Math.min(120, maxTokens),
-        messages: [
-          ...recentMessages(body).slice(-2),
-          { role: "user", content: `${rescuePrompt}\n\n用户：${clip(body.userMessage, 1000)}` }
-        ]
-      });
-      timing.requestBytes = new TextEncoder().encode(rescueBody).length;
-      try {
-        upstream = await fetchWithTimeout(
-          chatCompletionsUrl(baseUrl),
-          chatRequestInit(apiKey, rescueBody),
-          rescueTimeoutMs
-        );
-        timing.fallbackMs = Date.now() - fallbackStart;
-      } catch (fallbackError) {
-        timing.fallbackMs = Date.now() - fallbackStart;
-        timing.fallbackErrorName = fallbackError instanceof Error ? fallbackError.name : "UnknownError";
-        throw fallbackError;
-      }
+      if (primaryTimedOut) timing.errorName = primaryError.name;
+      throw primaryError;
     }
     timing.upstreamMs = Date.now() - upstreamStart;
     timing.upstreamStatus = upstream.status;
