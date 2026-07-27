@@ -42,6 +42,16 @@ type ChatRequest = {
   userMessage: string;
 };
 
+type ChatTiming = {
+  serverStartAt: string;
+  promptChars: number;
+  requestBytes: number;
+  upstreamMs?: number;
+  serverTotalMs?: number;
+  upstreamStatus?: number;
+  errorName?: string;
+};
+
 function clip(value: unknown, limit: number) {
   const text = String(value || "").trim();
   if (text.length <= limit) return text;
@@ -175,6 +185,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 }
 
 export async function POST(request: Request) {
+  const serverStart = Date.now();
   const body = (await request.json()) as ChatRequest;
   const apiKey = process.env.AI_API_KEY;
   const rawBaseUrl = process.env.AI_BASE_URL;
@@ -187,9 +198,14 @@ export async function POST(request: Request) {
   const timeoutMs = Math.max(15000, Math.min(55000, safeNumber(process.env.AI_TIMEOUT_MS, 55000)));
   const fastSystemPrompt = buildFastSystemPrompt(body);
   const fullSystemPrompt = buildSystemPrompt(body);
+  const timing: ChatTiming = {
+    serverStartAt: new Date(serverStart).toISOString(),
+    promptChars: fastSystemPrompt.length + clip(body.userMessage, 2000).length,
+    requestBytes: 0
+  };
 
   if (!apiKey || !baseUrl || !model) {
-    return NextResponse.json({ error: "还没有配置模型 API，请检查 Vercel 环境变量。" }, { status: 500 });
+    return NextResponse.json({ error: "还没有配置模型 API，请检查 Vercel 环境变量。", timing }, { status: 500 });
   }
 
   if (request.headers.get("x-chat-debug") === "1") {
@@ -206,6 +222,24 @@ export async function POST(request: Request) {
   }
 
   try {
+    const upstreamStart = Date.now();
+    const upstreamBody =
+      wireApi === "responses"
+        ? JSON.stringify({
+            model,
+            temperature,
+            input: buildConversationText(body)
+          })
+        : JSON.stringify({
+            model,
+            temperature,
+            max_tokens: maxTokens,
+            messages: [
+              ...recentMessages(body),
+              { role: "user", content: `${fastSystemPrompt}\n\n用户：${clip(body.userMessage, 2000)}` }
+            ]
+          });
+    timing.requestBytes = new TextEncoder().encode(upstreamBody).length;
     const upstream =
       wireApi === "responses"
         ? await fetchWithTimeout(
@@ -213,11 +247,7 @@ export async function POST(request: Request) {
             {
               method: "POST",
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-              body: JSON.stringify({
-                model,
-                temperature,
-                input: buildConversationText(body)
-              })
+              body: upstreamBody
             },
             timeoutMs
           )
@@ -226,23 +256,18 @@ export async function POST(request: Request) {
             {
               method: "POST",
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-              body: JSON.stringify({
-                model,
-                temperature,
-                max_tokens: maxTokens,
-                messages: [
-                  ...recentMessages(body),
-                  { role: "user", content: `${fastSystemPrompt}\n\n用户：${clip(body.userMessage, 2000)}` }
-                ]
-              })
+              body: upstreamBody
             },
             timeoutMs
           );
+    timing.upstreamMs = Date.now() - upstreamStart;
+    timing.upstreamStatus = upstream.status;
 
     if (!upstream.ok) {
       const text = await upstream.text();
+      timing.serverTotalMs = Date.now() - serverStart;
       return NextResponse.json(
-        { error: `模型接口返回错误：${upstream.status}`, detail: text.slice(0, 800) },
+        { error: `模型接口返回错误：${upstream.status}`, detail: text.slice(0, 800), timing },
         { status: 502 }
       );
     }
@@ -250,25 +275,29 @@ export async function POST(request: Request) {
     const data = await upstream.json();
     const content =
       wireApi === "responses" ? parseResponsesApiText(data) : data?.choices?.[0]?.message?.content || "";
+    timing.serverTotalMs = Date.now() - serverStart;
     if (wireApi === "chat") {
-      return NextResponse.json({ reply: content || "我在。", statusUpdate: {}, memoryUpdate: "" });
+      return NextResponse.json({ reply: content || "我在。", statusUpdate: {}, memoryUpdate: "", timing });
     }
 
     const parsed = extractJson(content);
 
     if (!parsed) {
-      return NextResponse.json({ reply: content || "模型没有返回内容。", statusUpdate: {}, memoryUpdate: "" });
+      return NextResponse.json({ reply: content || "模型没有返回内容。", statusUpdate: {}, memoryUpdate: "", timing });
     }
 
     return NextResponse.json({
       reply: parsed.reply || content,
       statusUpdate: parsed.status_update || parsed.statusUpdate || {},
-      memoryUpdate: parsed.memory_update || parsed.memoryUpdate || ""
+      memoryUpdate: parsed.memory_update || parsed.memoryUpdate || "",
+      timing
     });
   } catch (error) {
     const isTimeout = error instanceof Error && error.name === "AbortError";
+    timing.errorName = error instanceof Error ? error.name : "UnknownError";
+    timing.serverTotalMs = Date.now() - serverStart;
     return NextResponse.json(
-      { error: isTimeout ? "模型响应超时，请稍后重试或换更快的模型。" : "模型请求失败，请检查中转站或模型配置。" },
+      { error: isTimeout ? "模型响应超时，请稍后重试或换更快的模型。" : "模型请求失败，请检查中转站或模型配置。", timing },
       { status: isTimeout ? 504 : 502 }
     );
   }

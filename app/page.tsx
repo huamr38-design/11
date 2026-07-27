@@ -569,7 +569,13 @@ export default function Home() {
         })
       });
       const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data.error || "请求失败");
+      if (!response.ok) {
+        const timing = data?.timing;
+        const timingText = timing
+          ? `（服务器总耗时 ${Math.round((timing.serverTotalMs || 0) / 1000)} 秒，上游耗时 ${Math.round((timing.upstreamMs || 0) / 1000)} 秒，请求 ${Math.round((timing.requestBytes || 0) / 1024)} KB）`
+          : "";
+        throw new Error(`${data?.error || "请求失败"}${timingText}`);
+      }
 
       const assistantMessage: ChatMessage = {
         id: uid("message"),
