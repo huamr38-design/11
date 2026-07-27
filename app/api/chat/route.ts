@@ -208,6 +208,10 @@ function chatRequestInit(apiKey: string, body: string): RequestInit {
   };
 }
 
+function shouldRetryUpstream(status: number) {
+  return status === 429 || status === 502 || status === 503 || status === 504;
+}
+
 export async function POST(request: Request) {
   const serverStart = Date.now();
   const body = (await request.json()) as ChatRequest;
@@ -269,6 +273,7 @@ export async function POST(request: Request) {
           });
     timing.requestBytes = new TextEncoder().encode(upstreamBody).length;
     let upstream: Response;
+    let rescueBody = "";
     try {
       upstream =
         wireApi === "responses"
@@ -290,7 +295,7 @@ export async function POST(request: Request) {
       timing.errorName = primaryError.name;
       const fallbackStart = Date.now();
       const rescuePrompt = buildRescueSystemPrompt(body);
-      const rescueBody = JSON.stringify({
+      rescueBody = JSON.stringify({
         model,
         temperature,
         max_tokens: Math.min(120, maxTokens),
@@ -315,6 +320,36 @@ export async function POST(request: Request) {
     }
     timing.upstreamMs = Date.now() - upstreamStart;
     timing.upstreamStatus = upstream.status;
+
+    if (!upstream.ok && wireApi === "chat" && shouldRetryUpstream(upstream.status)) {
+      timing.fallbackUsed = true;
+      const fallbackStart = Date.now();
+      const rescuePrompt = buildRescueSystemPrompt(body);
+      rescueBody = JSON.stringify({
+        model,
+        temperature,
+        max_tokens: Math.min(120, maxTokens),
+        messages: [
+          ...recentMessages(body).slice(-2),
+          { role: "user", content: `${rescuePrompt}\n\n用户：${clip(body.userMessage, 1000)}` }
+        ]
+      });
+      timing.requestBytes = new TextEncoder().encode(rescueBody).length;
+      try {
+        upstream = await fetchWithTimeout(
+          chatCompletionsUrl(baseUrl),
+          chatRequestInit(apiKey, rescueBody),
+          rescueTimeoutMs
+        );
+        timing.fallbackMs = Date.now() - fallbackStart;
+        timing.upstreamStatus = upstream.status;
+        timing.upstreamMs = Date.now() - upstreamStart;
+      } catch (fallbackError) {
+        timing.fallbackMs = Date.now() - fallbackStart;
+        timing.fallbackErrorName = fallbackError instanceof Error ? fallbackError.name : "UnknownError";
+        throw fallbackError;
+      }
+    }
 
     if (!upstream.ok) {
       const text = await upstream.text();
