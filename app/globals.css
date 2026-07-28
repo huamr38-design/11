@@ -904,6 +904,46 @@ textarea {
   border-radius: 8px;
 }
 
+.agent-rule-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.agent-side-note {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(57, 169, 232, 0.26);
+  border-radius: 8px;
+  background: rgba(232, 248, 255, 0.84);
+  color: #24566d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.agent-side-note strong {
+  color: #12324a;
+  font-size: 13px;
+}
+
+.agent-side-note p {
+  margin: 0;
+}
+
+.agent-side-note pre {
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(17, 43, 66, 0.08);
+  color: #12324a;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
 .modal-actions-row {
   display: flex;
   gap: 10px;

@@ -19,7 +19,7 @@ import {
   UserCircle,
   X
 } from "lucide-react";
-import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type CharacterCard = {
   id: string;
@@ -243,6 +243,7 @@ export default function Home() {
   const [chatOpen, setChatOpen] = useState(false);
   const [homeMenuOpen, setHomeMenuOpen] = useState(false);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+  const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [currentUser, setCurrentUser] = useState("");
   const [currentToken, setCurrentToken] = useState("");
   const [loginName, setLoginName] = useState("");
@@ -412,7 +413,23 @@ export default function Home() {
   }
 
   function insertComposerTemplate(left: string, right: string) {
-    setDraft((current) => `${current}${current && !current.endsWith("\n") ? "\n" : ""}${left}${right}`);
+    const textarea = composerTextareaRef.current;
+    if (!textarea) {
+      setDraft((current) => `${current}${left}${right}`);
+      return;
+    }
+
+    const start = textarea.selectionStart ?? draft.length;
+    const end = textarea.selectionEnd ?? start;
+    const selectedText = draft.slice(start, end);
+    const nextDraft = `${draft.slice(0, start)}${left}${selectedText}${right}${draft.slice(end)}`;
+    const nextCursor = start + left.length + selectedText.length;
+
+    setDraft(nextDraft);
+    window.requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(nextCursor, nextCursor);
+    });
   }
 
   function updateDirector(next: BackendAgent) {
@@ -903,6 +920,7 @@ export default function Home() {
             )}
           </div>
           <textarea
+            ref={composerTextareaRef}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={handleComposerKeyDown}
@@ -973,6 +991,22 @@ export default function Home() {
               uploadLabel={"\u4e0a\u4f20 .txt / JSON \u72b6\u6001\u680f\u667a\u80fd\u4f53"}
               saveLabel={"\u4fdd\u5b58\u72b6\u6001\u680f\u667a\u80fd\u4f53"}
               placeholder={"\u5199\u72b6\u6001\u680f\u4e13\u7528\u89c4\u5219\uff1a\u5b57\u6bb5\u540d\u79f0\u3001\u6570\u503c\u53d8\u5316\u65b9\u5f0f\u3001\u54ea\u4e9b\u5185\u5bb9\u5199\u5165\u8bb0\u5fc6\u3002\u8fd9\u91cc\u53ea\u5f71\u54cd\u6bcf\u8f6e\u5bf9\u8bdd\u4e0b\u65b9\u7684\u72b6\u6001\u680f\u3002"}
+              sideNote={
+                <div className="agent-side-note">
+                  <strong>多角色状态写法</strong>
+                  <p>如果一张角色卡里有多个角色，状态栏必须按角色分组输出。</p>
+                  <pre>{`唐玉状态
+❤️ 好感度 ・ 6
+💛 堕落度 ・ 2
+👀 眼神 ・ 不敢对视
+
+王小小状态
+❤️ 好感度 ・ 6
+💛 堕落度 ・ 1
+📍 位置 ・ 客厅`}</pre>
+                  <p>不要把多个角色混成一张总状态栏；每轮只更新本轮出现或变化的角色。</p>
+                </div>
+              }
             />
           )}
           {panel === "character" && isAdmin && (
@@ -1152,6 +1186,8 @@ function AgentEditor({
   uploadLabel = "\u4e0a\u4f20 .txt / JSON \u667a\u80fd\u4f53",
   saveLabel = "\u4fdd\u5b58\u901a\u7528\u667a\u80fd\u4f53",
   placeholder = "\u5199\u5168\u7ad9\u901a\u7528\u603b\u89c4\u5219\u3002API \u4f1a\u5148\u5957\u901a\u7528\u667a\u80fd\u4f53\uff0c\u518d\u5957\u5f53\u524d\u89d2\u8272\u5361\uff0c\u6700\u540e\u751f\u6210\u7528\u6237\u770b\u5230\u7684\u804a\u5929\u56de\u590d\u3002"
+  ,
+  sideNote
 }: {
   value: BackendAgent;
   setValue: (value: BackendAgent) => void;
@@ -1159,6 +1195,7 @@ function AgentEditor({
   uploadLabel?: string;
   saveLabel?: string;
   placeholder?: string;
+  sideNote?: React.ReactNode;
 }) {
   async function importAgentText(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -1186,7 +1223,10 @@ function AgentEditor({
   return (
     <div className="modal-stack">
       <label className="upload-button"><BookOpen size={16} />{uploadLabel}<input type="file" accept=".txt,text/plain,application/json" onChange={importAgentText} /></label>
-      <label>{"\u603b\u89c4\u5219"}<textarea value={value.systemPrompt} onChange={(event) => setValue({ ...value, systemPrompt: event.target.value, description: "", replyStyle: "", statusRule: "", memoryRule: "", photos: [] })} placeholder={placeholder} /></label>
+      <div className={sideNote ? "agent-rule-grid" : ""}>
+        <label>{"\u603b\u89c4\u5219"}<textarea value={value.systemPrompt} onChange={(event) => setValue({ ...value, systemPrompt: event.target.value, description: "", replyStyle: "", statusRule: "", memoryRule: "", photos: [] })} placeholder={placeholder} /></label>
+        {sideNote}
+      </div>
       <button className="primary" onClick={onDone}><Save size={16} />{saveLabel}</button>
     </div>
   );
