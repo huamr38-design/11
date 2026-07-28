@@ -178,6 +178,31 @@ function fallbackStatus(body: StatusRequest) {
   return Object.fromEntries(statusNames.map((name) => [name, next]));
 }
 
+function fallbackStatusV2(body: StatusRequest) {
+  const statusNames = cleanStatusNames(body.character?.statusNames);
+  const previous = body.previousStatus || {};
+  const combined = `${body.userMessage || ""}\n${body.assistantReply || ""}`;
+  const changed = Math.min(10, Math.max(1, Math.ceil(combined.length / 160)));
+  const makeOne = (prior: Record<string, string | number> = {}) => ({
+    "\u5f53\u524d\u9636\u6bb5": String(prior["\u5f53\u524d\u9636\u6bb5"] || "\u6301\u7eed\u4ea4\u6d41"),
+    "\u5fc3\u60c5": combined ? "\u88ab\u672c\u8f6e\u5bf9\u8bdd\u7275\u52a8" : String(prior["\u5fc3\u60c5"] || "\u5e73\u7a33"),
+    "\u4f4d\u7f6e": String(prior["\u4f4d\u7f6e"] || body.character?.scenario || "\u5bf9\u8bdd\u573a\u666f").slice(0, 40),
+    "\u52a8\u4f5c": combined ? "\u6839\u636e\u5bf9\u8bdd\u7ee7\u7eed\u53cd\u5e94" : String(prior["\u52a8\u4f5c"] || "\u7b49\u5f85\u4e0b\u4e00\u6b65"),
+    "\u5bf9\u7528\u6237\u6001\u5ea6": String(prior["\u5bf9\u7528\u6237\u6001\u5ea6"] || "\u4fdd\u6301\u5173\u6ce8"),
+    "\u8bed\u6c14": String(prior["\u8bed\u6c14"] || "\u81ea\u7136"),
+    "\u773c\u795e": String(prior["\u773c\u795e"] || "\u4e13\u6ce8"),
+    "\u7a7f\u7740": String(prior["\u7a7f\u7740"] || "\u4fdd\u6301\u539f\u8bbe\u5b9a"),
+    "\u8eab\u4f53\u53cd\u5e94": String(prior["\u8eab\u4f53\u53cd\u5e94"] || "\u968f\u5267\u60c5\u8f7b\u5fae\u53d8\u5316"),
+    "\u5173\u7cfb\u63a8\u8fdb": Math.max(0, Math.min(100, Number(prior["\u5173\u7cfb\u63a8\u8fdb"] || 30) + changed))
+  });
+
+  if (!statusNames.length) return makeOne(previous as Record<string, string | number>);
+  return Object.fromEntries(statusNames.map((name) => {
+    const prior = previous[name];
+    return [name, makeOne(prior && typeof prior === "object" && !Array.isArray(prior) ? prior as Record<string, string | number> : {})];
+  }));
+}
+
 export async function POST(request: Request) {
   const body = (await request.json()) as StatusRequest;
   const apiKey = process.env.AI_API_KEY;
@@ -188,7 +213,7 @@ export async function POST(request: Request) {
   const timeoutMs = Math.max(6000, Math.min(25000, safeNumber(process.env.AI_STATUS_TIMEOUT_MS, 22000)));
 
   if (!apiKey || !baseUrl || !model) {
-    return NextResponse.json({ statusUpdate: fallbackStatus(body), memoryUpdate: "" });
+    return NextResponse.json({ statusUpdate: fallbackStatusV2(body), memoryUpdate: "" });
   }
 
   try {
@@ -208,22 +233,22 @@ export async function POST(request: Request) {
     );
 
     if (!upstream.ok) {
-      return NextResponse.json({ statusUpdate: fallbackStatus(body), memoryUpdate: "" });
+      return NextResponse.json({ statusUpdate: fallbackStatusV2(body), memoryUpdate: "" });
     }
 
     const data = await upstream.json();
     const content = data?.choices?.[0]?.message?.content || "";
     const parsed = extractJson(content) as { status_update?: unknown; statusUpdate?: unknown; memory_update?: unknown; memoryUpdate?: unknown } | null;
     if (!parsed) {
-      return NextResponse.json({ statusUpdate: fallbackStatus(body), memoryUpdate: "" });
+      return NextResponse.json({ statusUpdate: fallbackStatusV2(body), memoryUpdate: "" });
     }
     const statusUpdate = normalizeStatus(parsed.status_update || parsed.statusUpdate, cleanStatusNames(body.character?.statusNames));
 
     return NextResponse.json({
-      statusUpdate: Object.keys(statusUpdate).length ? statusUpdate : fallbackStatus(body),
+      statusUpdate: Object.keys(statusUpdate).length ? statusUpdate : fallbackStatusV2(body),
       memoryUpdate: clip(parsed.memory_update || parsed.memoryUpdate || "", 500)
     });
   } catch {
-    return NextResponse.json({ statusUpdate: fallbackStatus(body), memoryUpdate: "" });
+    return NextResponse.json({ statusUpdate: fallbackStatusV2(body), memoryUpdate: "" });
   }
 }
