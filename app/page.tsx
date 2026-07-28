@@ -66,8 +66,8 @@ type MaintenanceSettings = {
 };
 
 const THEME = {
-  name: "冰蓝",
-  main: "#39a9e8"
+  name: "??",
+  main: "#0ea5e9"
 };
 
 const starterCharacters: CharacterCard[] = [
@@ -124,7 +124,7 @@ const defaultStatus: StatusMap = {
 };
 
 const defaultBackground: BackgroundSettings = {
-  color: "#edf8ff",
+  color: "#050914",
   imageUrl: "",
   opacity: 0.22
 };
@@ -244,6 +244,7 @@ export default function Home() {
   const [homeMenuOpen, setHomeMenuOpen] = useState(false);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const chatBodyRef = useRef<HTMLDivElement>(null);
   const [currentUser, setCurrentUser] = useState("");
   const [currentToken, setCurrentToken] = useState("");
   const [loginName, setLoginName] = useState("");
@@ -376,6 +377,15 @@ export default function Home() {
   const memory = memoryByCharacter[activeCharacter.id] || "";
   const contextMessageLimit = contextLimitByCharacter[activeCharacter.id] || 8;
   const busy = busyCharacterId === activeCharacter.id;
+
+  useEffect(() => {
+    if (!chatOpen) return;
+    const chatBody = chatBodyRef.current;
+    if (!chatBody) return;
+    window.requestAnimationFrame(() => {
+      chatBody.scrollTop = chatBody.scrollHeight;
+    });
+  }, [activeCharacterId, chatOpen, messages.length, busy]);
 
   function setActiveMessages(next: ChatMessage[]) {
     setMessagesByCharacter((current) => ({ ...current, [activeCharacter.id]: next }));
@@ -883,7 +893,7 @@ export default function Home() {
           <div className="xc-lock">{isAdmin ? "管理员模式" : "普通用户"}</div>
         </header>
 
-        <div className="xc-chat-body">
+        <div className="xc-chat-body" ref={chatBodyRef}>
           {messages.length === 0 ? (
             <div className="xc-empty">
               <MessageCircleIcon />
