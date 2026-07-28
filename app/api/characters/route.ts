@@ -6,6 +6,7 @@ type CharacterCard = {
   name: string;
   tags: string[];
   avatarUrl?: string;
+  statusPrompt?: string;
   profile: string;
   personality: string;
   scenario: string;
@@ -29,6 +30,7 @@ function cleanCharacter(value: Partial<CharacterCard> & Record<string, unknown>)
     name,
     tags: Array.isArray(value.tags) ? value.tags.map(String).filter(Boolean) : [],
     avatarUrl: String(value.avatarUrl || ""),
+    statusPrompt: String(value.statusPrompt || ""),
     profile: String(value.profile || ""),
     personality: String(value.personality || ""),
     scenario: String(value.scenario || ""),

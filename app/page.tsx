@@ -26,6 +26,7 @@ type CharacterCard = {
   name: string;
   tags: string[];
   avatarUrl?: string;
+  statusPrompt?: string;
   profile: string;
   personality: string;
   scenario: string;
@@ -66,7 +67,7 @@ type MaintenanceSettings = {
 };
 
 const THEME = {
-  name: "??",
+  name: "\u591c\u84dd",
   main: "#0ea5e9"
 };
 
@@ -76,6 +77,7 @@ const starterCharacters: CharacterCard[] = [
     name: "江雅真",
     tags: ["成年人", "私密聊天", "慢热关系"],
     avatarUrl: "",
+    statusPrompt: "",
     profile: "25 岁，独立设计师。外表清冷、礼貌，熟悉后会露出柔软和调皮的一面。所有设定均为成年人私密角色扮演。",
     personality: "说话自然，有情绪起伏。对话内容用中文引号，动作和心理描写用括号。保持沉浸，但不要像客服，也不要机械总结。",
     scenario: "夜晚的客厅，窗外有城市灯光。她刚洗完手坐下，像是在等你开口。",
@@ -458,6 +460,7 @@ export default function Home() {
       name: "新角色",
       tags: ["成年人"],
       avatarUrl: "",
+      statusPrompt: "",
       profile: "从管理员新增的角色卡。",
       personality: "",
       scenario: "私人聊天",
@@ -601,7 +604,7 @@ export default function Home() {
           memory: args.memory
           ,
           backendAgent: compactDirectorForChat(director),
-          statusAgent: compactDirectorForChat(statusAgent)
+          statusAgent: compactDirectorForChat(args.character.statusPrompt?.trim() ? { ...statusAgent, systemPrompt: args.character.statusPrompt } : statusAgent)
         })
       });
       const data = await response.json().catch(() => null);
@@ -745,49 +748,33 @@ export default function Home() {
       }}
     >
       <aside className="xc-sidebar">
-        <nav className="xc-rail" aria-label="主导航">
-          <button className="rail-avatar" type="button" title="首页" onClick={() => setChatOpen(false)}>
-            <Sparkles size={18} />
+        <nav className="xc-rail" aria-label="main navigation">
+          <button className="rail-avatar" type="button" title={"\u8d5b\u535a\u5973\u53cb"} onClick={() => setChatOpen(false)}>
+            <img className="rail-brand-image" src="/cyber-heart.png" alt="" />
+            <span className="rail-label">{"\u8d5b\u535a\u5973\u53cb"}</span>
           </button>
-          <button type="button" title="角色列表" onClick={() => setChatOpen(false)}>
-            <Bot size={18} />
-          </button>
-          <button type="button" title="我的设定" onClick={() => setPanel("persona")}>
-            <Edit3 size={18} />
-          </button>
-          <button type="button" title="记忆设置" onClick={() => setPanel("memory")}>
-            <BookOpen size={18} />
-          </button>
-          <button type="button" title={currentUser ? `账号：${currentUser}` : "账号登录"} onClick={() => setPanel("account")}>
-            <UserCircle size={18} />
-          </button>
+          <button type="button" title={"\u89d2\u8272"} onClick={() => setChatOpen(false)}><Bot size={18} /><span className="rail-label">{"\u89d2\u8272"}</span></button>
+          <button type="button" title={"\u6211\u7684\u8bbe\u5b9a"} onClick={() => setPanel("persona")}><Edit3 size={18} /><span className="rail-label">{"\u6211\u7684\u8bbe\u5b9a"}</span></button>
+          <button type="button" title={"\u8bb0\u5fc6"} onClick={() => setPanel("memory")}><BookOpen size={18} /><span className="rail-label">{"\u8bb0\u5fc6"}</span></button>
+          <button type="button" title={currentUser ? `\u8d26\u53f7\uff1a${currentUser}` : "\u8d26\u53f7"} onClick={() => setPanel("account")}><UserCircle size={18} /><span className="rail-label">{"\u8d26\u53f7"}</span></button>
           {isAdmin ? (
             <>
-              <button type="button" title="新增角色卡" onClick={createCharacter}>
-                <Plus size={18} />
-              </button>
-              <button type="button" title="通用智能体" onClick={() => setPanel("agent")}>
-                <Bot size={18} />
-              </button>
-              <button type="button" title="\u72b6\u6001\u680f\u667a\u80fd\u4f53" onClick={() => setPanel("statusAgent")}><ShieldCheck size={18} /></button>
-              <button type="button" title="修改当前角色卡" onClick={() => setPanel("character")}>
-                <Settings size={18} />
-              </button>
-              <button type="button" title="退出管理员" onClick={logoutAdmin}>
-                <LogOut size={18} />
-              </button>
+              <button type="button" title={"\u65b0\u589e\u89d2\u8272"} onClick={createCharacter}><Plus size={18} /><span className="rail-label">{"\u65b0\u589e\u89d2\u8272"}</span></button>
+              <button type="button" title={"\u901a\u7528\u667a\u80fd\u4f53"} onClick={() => setPanel("agent")}><Bot size={18} /><span className="rail-label">{"\u901a\u7528\u667a\u80fd\u4f53"}</span></button>
+              <button type="button" title={"\u72b6\u6001\u680f\u667a\u80fd\u4f53"} onClick={() => setPanel("statusAgent")}><ShieldCheck size={18} /><span className="rail-label">{"\u72b6\u6001\u680f"}</span></button>
+              <button type="button" title={"\u4fee\u6539\u89d2\u8272\u5361"} onClick={() => setPanel("character")}><Settings size={18} /><span className="rail-label">{"\u89d2\u8272\u5361"}</span></button>
+              <button type="button" title={"\u7ef4\u62a4\u6a21\u5f0f"} onClick={() => setPanel("maintenance")}><ShieldCheck size={18} /><span className="rail-label">{"\u7ef4\u62a4"}</span></button>
+              <button type="button" title={"\u9000\u51fa\u7ba1\u7406\u5458"} onClick={logoutAdmin}><LogOut size={18} /><span className="rail-label">{"\u9000\u51fa"}</span></button>
             </>
           ) : (
-            <button type="button" title="管理员入口" onClick={() => setPanel("admin")}>
-              <Lock size={18} />
-            </button>
+            <button type="button" title={"\u7ba1\u7406\u5458\u5165\u53e3"} onClick={() => setPanel("admin")}><Lock size={18} /><span className="rail-label">{"\u7ba1\u7406\u5458"}</span></button>
           )}
         </nav>
         <div className="xc-brand">
-          <div className="xc-logo"><Sparkles size={18} /></div>
+          <div className="xc-logo"><img className="brand-logo-image" src="/cyber-heart.png" alt="" /></div>
           <div>
-            <strong>AI 角色聊天</strong>
-            <span>{THEME.name}主题</span>
+            <strong>{"\u8d5b\u535a\u5973\u53cb"}</strong>
+            <span>{THEME.name}{"\u4e3b\u9898"}</span>
           </div>
         </div>
 
@@ -1263,6 +1250,7 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
         name: String(parsed.name || parsed.title || value.name || fileName),
         tags: Array.isArray(parsed.tags) ? parsed.tags.map(String) : value.tags,
         avatarUrl: String(parsed.avatarUrl || parsed.avatar || value.avatarUrl || ""),
+        statusPrompt: String(parsed.statusPrompt || parsed.status_prompt || parsed.statusAgent || parsed.status_agent || parsed.status || value.statusPrompt || ""),
         profile: String(parsed.profile || parsed.description || parsed.background || value.profile || ""),
         personality: String(parsed.personality || parsed.persona || parsed.speaking_style || value.personality || ""),
         scenario: String(parsed.scenario || parsed.opening_scene || value.scenario || ""),
@@ -1274,6 +1262,7 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
         ...value,
         name: value.name || fileName,
         tags: value.tags.length ? value.tags : ["成年人"],
+        statusPrompt: value.statusPrompt || "",
         creatorNotes: text,
         profile: value.profile || "从 txt 文件导入的角色卡。",
         personality: value.personality || "沿用导入文本中的角色性格和说话方式。",
@@ -1289,6 +1278,7 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
       <label className="upload-button"><BookOpen size={16} />上传 .txt 角色卡<input type="file" accept=".txt,text/plain,application/json" onChange={importCharacterText} /></label>
       <label>角色名<input value={value.name} onChange={(event) => setValue({ ...value, name: event.target.value })} /></label>
       <label>头像 URL<input value={value.avatarUrl || ""} onChange={(event) => setValue({ ...value, avatarUrl: event.target.value })} /></label>
+      <label>{"\u72b6\u6001\u680f\u667a\u80fd\u4f53"}<textarea value={value.statusPrompt || ""} onChange={(event) => setValue({ ...value, statusPrompt: event.target.value })} placeholder={"\u8fd9\u5f20\u89d2\u8272\u5361\u4e13\u5c5e\u7684\u72b6\u6001\u680f\u89c4\u5219\u3002\u5982\u679c\u8fd9\u91cc\u586b\u4e86\uff0c\u5c31\u4e0d\u4f7f\u7528\u9ed8\u8ba4\u72b6\u6001\u680f\u667a\u80fd\u4f53\u3002"} /></label>
       <label>角色简介<textarea value={value.profile} onChange={(event) => setValue({ ...value, profile: event.target.value })} /></label>
       <label>角色卡内容<textarea value={value.creatorNotes} onChange={(event) => setValue({ ...value, creatorNotes: event.target.value })} placeholder="上传 .txt 后会自动填入这里。" /></label>
       <div className="character-image-row">

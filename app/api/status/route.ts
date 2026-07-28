@@ -13,6 +13,7 @@ type StatusRequest = {
   character?: {
     name?: string;
     tags?: string[];
+    statusPrompt?: string;
     profile?: string;
     personality?: string;
     scenario?: string;
@@ -70,6 +71,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 
 function buildStatusPrompt(body: StatusRequest) {
   const character = body.character || {};
+  const statusRule = String(character.statusPrompt || body.statusAgent?.systemPrompt || "").trim();
   const defaultRule = [
     "你是独立的状态栏智能体，只负责根据本轮对话更新聊天下方的状态栏和长期记忆。",
     "状态栏必须跟随角色卡、通用智能体、用户本轮发言、角色本轮回复、上一轮状态变化。",
@@ -77,7 +79,7 @@ function buildStatusPrompt(body: StatusRequest) {
   ].join("\n");
 
   return [
-    body.statusAgent?.systemPrompt ? `状态栏智能体规则：\n${clip(body.statusAgent.systemPrompt, 1800)}` : defaultRule,
+    statusRule ? `Status bar agent rule:\n${clip(statusRule, 1800)}` : defaultRule,
     `通用智能体总规则摘要：\n${clip(body.backendAgent?.systemPrompt || "", 900)}`,
     `角色名：${clip(character.name || "角色", 80)}`,
     `角色资料：${clip(character.profile, 500)}`,

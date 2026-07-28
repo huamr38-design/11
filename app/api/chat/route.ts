@@ -13,6 +13,7 @@ type CharacterCard = {
   id?: string;
   name: string;
   tags?: string[];
+  statusPrompt?: string;
   profile?: string;
   personality?: string;
   scenario?: string;

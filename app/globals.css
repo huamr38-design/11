@@ -1381,3 +1381,69 @@ button:hover {
     background: linear-gradient(180deg, transparent, rgba(2, 6, 13, 0.28));
   }
 }
+
+@media (min-width: 761px) {
+  .xiangcao-shell,
+  .xiangcao-shell.home-open {
+    grid-template-columns: 440px minmax(0, 1fr);
+  }
+
+  .xc-sidebar {
+    grid-template-columns: 138px minmax(0, 1fr);
+  }
+
+  .xc-rail {
+    gap: 8px;
+    padding: 14px 10px;
+  }
+
+  .xc-rail button {
+    display: flex;
+    justify-content: flex-start;
+    gap: 9px;
+    width: 116px;
+    min-height: 42px;
+    height: 42px;
+    padding: 0 10px;
+    border-radius: 8px;
+    color: #b8e4ff;
+  }
+
+  .xc-rail .rail-avatar {
+    height: 54px;
+    margin-bottom: 8px;
+    background: rgba(14, 165, 233, 0.16);
+  }
+
+  .rail-label {
+    min-width: 0;
+    overflow: hidden;
+    color: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .rail-brand-image,
+  .brand-logo-image {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    object-fit: cover;
+  }
+
+  .xc-logo:has(.brand-logo-image) {
+    background: rgba(14, 165, 233, 0.16);
+  }
+
+  .home-menu,
+  .role-admin-shortcuts,
+  .maintenance-shortcut {
+    display: none;
+  }
+
+  .role-card-list {
+    padding-top: 16px;
+  }
+}
