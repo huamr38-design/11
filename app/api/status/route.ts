@@ -4,6 +4,11 @@ export const runtime = "nodejs";
 export const preferredRegion = "iad1";
 export const maxDuration = 20;
 
+type BackendAgent = {
+  name?: string;
+  systemPrompt?: string;
+};
+
 type StatusRequest = {
   character?: {
     name?: string;
@@ -14,6 +19,8 @@ type StatusRequest = {
     creatorNotes?: string;
     worldBook?: string;
   };
+  backendAgent?: BackendAgent;
+  statusAgent?: BackendAgent;
   userPersona?: string;
   userMessage?: string;
   assistantReply?: string;
@@ -63,20 +70,30 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 
 function buildStatusPrompt(body: StatusRequest) {
   const character = body.character || {};
-  return [
-    "根据这一轮聊天，更新状态面板。只返回 JSON，不要解释。",
-    "格式：{\"status_update\":{\"当前阶段\":\"...\",\"调戏兴致\":0,\"脸红度\":0,\"身体燥热\":0,\"隐秘湿润\":0,\"禁忌感\":0,\"涵湿状态\":\"...\",\"衣衫完整度\":100,\"当前位置\":\"...\",\"心理状态\":\"...\",\"语气\":\"...\",\"眼神\":\"...\",\"当前穿着\":\"...\",\"身体反应\":\"...\"},\"memory_update\":\"\"}",
-    "数值用 0-100，文字要短。没有长期记忆就让 memory_update 为空字符串。",
-    `角色：${clip(character.name || "角色", 80)}`,
-    `标签：${clip((character.tags || []).join(", "), 160)}`,
-    `角色资料：${clip(character.profile, 360)}`,
-    `当前场景：${clip(character.scenario, 260)}`,
-    `用户设定：${clip(body.userPersona || "", 220)}`,
-    `上一状态：${clip(JSON.stringify(body.previousStatus || {}), 700)}`,
-    `长期记忆：${clip(body.memory || "", 450)}`,
-    `用户刚说：${clip(body.userMessage || "", 600)}`,
-    `角色刚回复：${clip(body.assistantReply || "", 900)}`
+  const defaultRule = [
+    "你是独立的状态栏智能体，只负责根据本轮对话更新聊天下方的状态栏和长期记忆。",
+    "状态栏必须跟随角色卡、通用智能体、用户本轮发言、角色本轮回复、上一轮状态变化。",
+    "只返回 JSON，不要解释，不要 Markdown。文字字段要短，数值字段用 0-100。"
   ].join("\n");
+
+  return [
+    body.statusAgent?.systemPrompt ? `状态栏智能体规则：\n${clip(body.statusAgent.systemPrompt, 1800)}` : defaultRule,
+    `通用智能体总规则摘要：\n${clip(body.backendAgent?.systemPrompt || "", 900)}`,
+    `角色名：${clip(character.name || "角色", 80)}`,
+    `角色资料：${clip(character.profile, 500)}`,
+    `角色性格：${clip(character.personality, 420)}`,
+    `当前场景：${clip(character.scenario, 360)}`,
+    `角色卡正文：${clip(character.creatorNotes, 900)}`,
+    `世界观/补充：${clip(character.worldBook, 500)}`,
+    `我的设定：${clip(body.userPersona || "", 360)}`,
+    `上一轮状态：${clip(JSON.stringify(body.previousStatus || {}), 900)}`,
+    `长期记忆：${clip(body.memory || "", 650)}`,
+    `用户刚说：${clip(body.userMessage || "", 700)}`,
+    `角色刚回复：${clip(body.assistantReply || "", 1100)}`,
+    "返回格式：",
+    "{\"status_update\":{\"当前阶段\":\"...\",\"调戏兴致\":0,\"脸红度\":0,\"身体燥热\":0,\"隐私湿润\":0,\"禁忌感\":0,\"濡湿状态\":\"...\",\"衣物完整度\":100,\"当前位置\":\"...\",\"心理状态\":\"...\",\"语气\":\"...\",\"眼神\":\"...\",\"当前穿着\":\"...\",\"身体反应\":\"...\"},\"memory_update\":\"\"}",
+    "如果没有新的重要长期记忆，memory_update 返回空字符串。"
+  ].join("\n\n");
 }
 
 function normalizeStatus(value: unknown) {
@@ -102,7 +119,7 @@ function fallbackStatus(body: StatusRequest) {
   const previous = body.previousStatus || {};
   const combined = `${body.userMessage || ""}\n${body.assistantReply || ""}`;
   const intensity = Math.min(10, Math.max(2, Math.ceil(combined.length / 80)));
-  const warmWords = /喜欢|想|靠近|抱|亲|害羞|脸红|紧张|心跳|温柔|暧昧/.test(combined);
+  const warmWords = /喜欢|靠近|抱|害羞|脸红|紧张|心跳|温柔|暧昧|亲密/.test(combined);
   const calmWords = /你好|在吗|吃饭|工作|今天|聊天|普通|随便/.test(combined);
   const delta = warmWords ? intensity : calmWords ? 1 : Math.max(1, Math.floor(intensity / 2));
 
@@ -111,10 +128,10 @@ function fallbackStatus(body: StatusRequest) {
     调戏兴致: clampPercent(previous.调戏兴致, 35, delta),
     脸红度: clampPercent(previous.脸红度, 20, warmWords ? delta : 1),
     身体燥热: clampPercent(previous.身体燥热, 10, warmWords ? Math.ceil(delta / 2) : 0),
-    隐秘湿润: clampPercent(previous.隐秘湿润, 5, warmWords ? Math.ceil(delta / 3) : 0),
+    隐私湿润: clampPercent(previous.隐私湿润, 5, warmWords ? Math.ceil(delta / 3) : 0),
     禁忌感: clampPercent(previous.禁忌感, 15, Math.max(0, Math.floor(delta / 3))),
-    涵湿状态: String(previous.涵湿状态 || "房间内/不在场"),
-    衣衫完整度: clampPercent(previous.衣衫完整度, 95, 0),
+    濡湿状态: String(previous.濡湿状态 || "房间内，不在场"),
+    衣物完整度: clampPercent(previous.衣物完整度, 95, 0),
     当前位置: String(previous.当前位置 || body.character?.scenario || "聊天中").slice(0, 40),
     心理状态: warmWords ? "有些动摇，继续观察" : "专注回应，等待下文",
     语气: warmWords ? "放轻，带一点迟疑" : "自然，低声",
@@ -146,7 +163,7 @@ export async function POST(request: Request) {
         body: JSON.stringify({
           model,
           temperature,
-          max_tokens: 260,
+          max_tokens: 360,
           messages: [{ role: "user", content: buildStatusPrompt(body) }]
         })
       },

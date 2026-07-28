@@ -95,6 +95,17 @@ const fixedDirector: BackendAgent = {
   photos: []
 };
 
+const fixedStatusAgent: BackendAgent = {
+  id: "fixed-status-agent",
+  name: "状态栏智能体",
+  description: "",
+  systemPrompt: "",
+  replyStyle: "",
+  statusRule: "",
+  memoryRule: "",
+  photos: []
+};
+
 const defaultStatus: StatusMap = {
   当前阶段: "初次相识",
   调戏兴致: 35,
@@ -168,6 +179,14 @@ function saveAgentToServer(agent: BackendAgent, adminToken = "") {
   }).catch(() => undefined);
 }
 
+function saveStatusAgentToServer(agent: BackendAgent, adminToken = "") {
+  void fetch("/api/status-agent", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "x-admin-code": adminToken },
+    body: JSON.stringify({ agent })
+  }).catch(() => undefined);
+}
+
 function saveUserStateToServer(user: string, state: {
   messagesByCharacter: Record<string, ChatMessage[]>;
   statusByCharacter: Record<string, StatusMap>;
@@ -203,6 +222,7 @@ export default function Home() {
   const [characters, setCharacters] = useState<CharacterCard[]>(starterCharacters);
   const [activeCharacterId, setActiveCharacterId] = useState(starterCharacters[0].id);
   const [director, setDirector] = useState<BackendAgent>(fixedDirector);
+  const [statusAgent, setStatusAgent] = useState<BackendAgent>(fixedStatusAgent);
   const [messagesByCharacter, setMessagesByCharacter] = useState<Record<string, ChatMessage[]>>({});
   const [statusByCharacter, setStatusByCharacter] = useState<Record<string, StatusMap>>({});
   const [memoryByCharacter, setMemoryByCharacter] = useState<Record<string, string>>({});
@@ -219,7 +239,7 @@ export default function Home() {
   const [adminError, setAdminError] = useState("");
   const [maintenance, setMaintenance] = useState<MaintenanceSettings>(defaultMaintenance);
   const [maintenanceError, setMaintenanceError] = useState("");
-  const [panel, setPanel] = useState<"none" | "admin" | "persona" | "background" | "memory" | "character" | "agent" | "account" | "maintenance">("none");
+  const [panel, setPanel] = useState<"none" | "admin" | "persona" | "background" | "memory" | "character" | "agent" | "statusAgent" | "account" | "maintenance">("none");
   const [chatOpen, setChatOpen] = useState(false);
   const [homeMenuOpen, setHomeMenuOpen] = useState(false);
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
@@ -238,6 +258,7 @@ export default function Home() {
     setCharacters(nextCharacters);
     setActiveCharacterId(localStorage.getItem("activeCharacterId") || nextCharacters[0].id);
     setDirector(safeJsonParse(localStorage.getItem("fixedDirector"), fixedDirector));
+    setStatusAgent(safeJsonParse(localStorage.getItem("statusAgent"), fixedStatusAgent));
     setMessagesByCharacter(safeJsonParse(localStorage.getItem("messagesByCharacter"), {}));
     setStatusByCharacter(safeJsonParse(localStorage.getItem("statusByCharacter"), {}));
     setMemoryByCharacter(safeJsonParse(localStorage.getItem("memoryByCharacter"), {}));
@@ -290,11 +311,22 @@ export default function Home() {
         if (adminUnlocked && savedAdminToken) saveAgentToServer(safeJsonParse(localStorage.getItem("fixedDirector"), fixedDirector), savedAdminToken);
       })
       .catch(() => undefined);
+    void fetch("/api/status-agent")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (data?.agent?.id) {
+          setStatusAgent(data.agent);
+          return;
+        }
+        if (adminUnlocked && savedAdminToken) saveStatusAgentToServer(safeJsonParse(localStorage.getItem("statusAgent"), fixedStatusAgent), savedAdminToken);
+      })
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => localStorage.setItem("characters", JSON.stringify(characters)), [characters]);
   useEffect(() => localStorage.setItem("activeCharacterId", activeCharacterId), [activeCharacterId]);
   useEffect(() => localStorage.setItem("fixedDirector", JSON.stringify(director)), [director]);
+  useEffect(() => localStorage.setItem("statusAgent", JSON.stringify(statusAgent)), [statusAgent]);
   useEffect(() => localStorage.setItem("messagesByCharacter", JSON.stringify(messagesByCharacter)), [messagesByCharacter]);
   useEffect(() => localStorage.setItem("statusByCharacter", JSON.stringify(statusByCharacter)), [statusByCharacter]);
   useEffect(() => localStorage.setItem("memoryByCharacter", JSON.stringify(memoryByCharacter)), [memoryByCharacter]);
@@ -388,6 +420,11 @@ export default function Home() {
     saveAgentToServer(next, adminToken);
   }
 
+  function updateStatusAgent(next: BackendAgent) {
+    setStatusAgent(next);
+    saveStatusAgentToServer(next, adminToken);
+  }
+
   function createCharacter() {
     const character: CharacterCard = {
       id: uid("character"),
@@ -444,7 +481,8 @@ export default function Home() {
     setAdminToken(adminCode);
     localStorage.setItem("adminToken", adminCode);
     if (characters.length) saveCharactersToServer(characters, adminCode);
-    saveAgentToServer(fixedDirector, adminCode);
+    saveAgentToServer(director, adminCode);
+    saveStatusAgentToServer(statusAgent, adminCode);
     setAdminCode("");
     setPanel("none");
   }
@@ -534,6 +572,9 @@ export default function Home() {
           assistantReply: args.assistantReply,
           previousStatus: args.previousStatus,
           memory: args.memory
+          ,
+          backendAgent: compactDirectorForChat(director),
+          statusAgent: compactDirectorForChat(statusAgent)
         })
       });
       const data = await response.json().catch(() => null);
@@ -701,6 +742,7 @@ export default function Home() {
               <button type="button" title="通用智能体" onClick={() => setPanel("agent")}>
                 <Bot size={18} />
               </button>
+              <button type="button" title="\u72b6\u6001\u680f\u667a\u80fd\u4f53" onClick={() => setPanel("statusAgent")}><ShieldCheck size={18} /></button>
               <button type="button" title="修改当前角色卡" onClick={() => setPanel("character")}>
                 <Settings size={18} />
               </button>
@@ -734,6 +776,8 @@ export default function Home() {
               {isAdmin ? (
                 <>
                   <button onClick={() => { createCharacter(); setHomeMenuOpen(false); }}><Plus size={16} />新增角色卡</button>
+                  <button onClick={() => { setPanel("agent"); setHomeMenuOpen(false); }}><Bot size={16} />{"\u901a\u7528\u667a\u80fd\u4f53"}</button>
+                  <button onClick={() => { setPanel("statusAgent"); setHomeMenuOpen(false); }}><ShieldCheck size={16} />{"\u72b6\u6001\u680f\u667a\u80fd\u4f53"}</button>
                   <button onClick={() => { setPanel("character"); setHomeMenuOpen(false); }}><Edit3 size={16} />修改当前角色卡</button>
                   <button onClick={() => { logoutAdmin(); setHomeMenuOpen(false); }}><LogOut size={16} />退出管理员</button>
                 </>
@@ -749,6 +793,7 @@ export default function Home() {
             <>
               <button type="button" onClick={createCharacter}><Plus size={16} />新增角色卡</button>
               <button type="button" onClick={() => setPanel("agent")}><Bot size={16} />通用智能体</button>
+              <button className="role-admin-shortcuts-status-agent" type="button" onClick={() => setPanel("statusAgent")}><ShieldCheck size={16} />{"\u72b6\u6001\u680f\u667a\u80fd\u4f53"}</button>
               <button type="button" onClick={() => setPanel("character")}><Edit3 size={16} />修改当前角色卡</button>
             </>
           ) : (
@@ -790,6 +835,8 @@ export default function Home() {
           {isAdmin ? (
             <>
               <button onClick={createCharacter}><Plus size={16} />新增角色卡</button>
+              <button className="xc-tools-agent" onClick={() => setPanel("agent")}><Bot size={16} />{"\u901a\u7528\u667a\u80fd\u4f53"}</button>
+              <button className="xc-tools-status-agent" onClick={() => setPanel("statusAgent")}><ShieldCheck size={16} />{"\u72b6\u6001\u680f\u667a\u80fd\u4f53"}</button>
               <button onClick={() => setPanel("character")}><Edit3 size={16} />修改当前角色卡</button>
               <button onClick={logoutAdmin}><LogOut size={16} />退出管理员</button>
             </>
@@ -918,6 +965,16 @@ export default function Home() {
               onDone={() => setPanel("none")}
             />
           )}
+          {panel === "statusAgent" && isAdmin && (
+            <AgentEditor
+              value={statusAgent}
+              setValue={updateStatusAgent}
+              onDone={() => setPanel("none")}
+              uploadLabel={"\u4e0a\u4f20 .txt / JSON \u72b6\u6001\u680f\u667a\u80fd\u4f53"}
+              saveLabel={"\u4fdd\u5b58\u72b6\u6001\u680f\u667a\u80fd\u4f53"}
+              placeholder={"\u5199\u72b6\u6001\u680f\u4e13\u7528\u89c4\u5219\uff1a\u5b57\u6bb5\u540d\u79f0\u3001\u6570\u503c\u53d8\u5316\u65b9\u5f0f\u3001\u54ea\u4e9b\u5185\u5bb9\u5199\u5165\u8bb0\u5fc6\u3002\u8fd9\u91cc\u53ea\u5f71\u54cd\u6bcf\u8f6e\u5bf9\u8bdd\u4e0b\u65b9\u7684\u72b6\u6001\u680f\u3002"}
+            />
+          )}
           {panel === "character" && isAdmin && (
             <CharacterEditor
               value={activeCharacter}
@@ -935,6 +992,7 @@ export default function Home() {
 
 function panelTitle(panel: string) {
   if (panel === "agent") return "通用智能体";
+  if (panel === "statusAgent") return "\u72b6\u6001\u680f\u667a\u80fd\u4f53";
   if (panel === "account") return "账号登录";
   const map: Record<string, string> = {
     admin: "管理员登录",
@@ -1087,7 +1145,21 @@ function MemoryEditor({ value, setValue, limit, setLimit, onDone }: { value: str
   );
 }
 
-function AgentEditor({ value, setValue, onDone }: { value: BackendAgent; setValue: (value: BackendAgent) => void; onDone: () => void }) {
+function AgentEditor({
+  value,
+  setValue,
+  onDone,
+  uploadLabel = "\u4e0a\u4f20 .txt / JSON \u667a\u80fd\u4f53",
+  saveLabel = "\u4fdd\u5b58\u901a\u7528\u667a\u80fd\u4f53",
+  placeholder = "\u5199\u5168\u7ad9\u901a\u7528\u603b\u89c4\u5219\u3002API \u4f1a\u5148\u5957\u901a\u7528\u667a\u80fd\u4f53\uff0c\u518d\u5957\u5f53\u524d\u89d2\u8272\u5361\uff0c\u6700\u540e\u751f\u6210\u7528\u6237\u770b\u5230\u7684\u804a\u5929\u56de\u590d\u3002"
+}: {
+  value: BackendAgent;
+  setValue: (value: BackendAgent) => void;
+  onDone: () => void;
+  uploadLabel?: string;
+  saveLabel?: string;
+  placeholder?: string;
+}) {
   async function importAgentText(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -1097,68 +1169,25 @@ function AgentEditor({ value, setValue, onDone }: { value: BackendAgent; setValu
       const parsed = JSON.parse(text) as Partial<BackendAgent> & Record<string, unknown>;
       setValue({
         ...value,
-        name: String(parsed.name || value.name || "通用智能体"),
-        description: String(parsed.description || value.description || ""),
+        description: "",
         systemPrompt: String(parsed.systemPrompt || parsed.prompt || parsed.system || text),
-        replyStyle: String(parsed.replyStyle || parsed.reply_style || value.replyStyle || ""),
-        statusRule: String(parsed.statusRule || parsed.status_rule || value.statusRule || ""),
-        memoryRule: String(parsed.memoryRule || parsed.memory_rule || value.memoryRule || ""),
-        photos: Array.isArray(parsed.photos) ? parsed.photos as BackendAgent["photos"] : value.photos
+        replyStyle: "",
+        statusRule: "",
+        memoryRule: "",
+        photos: []
       });
     } catch {
-      setValue({ ...value, name: value.name || "通用智能体", systemPrompt: text });
+      setValue({ ...value, systemPrompt: text, description: "", replyStyle: "", statusRule: "", memoryRule: "", photos: [] });
     }
 
     event.target.value = "";
   }
 
-  async function uploadAgentPhoto(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const photo = {
-      id: uid("agent_photo"),
-      name: file.name,
-      url: await fileToDataUrl(file),
-      note: ""
-    };
-    setValue({ ...value, photos: [...(value.photos || []), photo] });
-    event.target.value = "";
-  }
-
-  function updatePhotoNote(id: string, note: string) {
-    setValue({
-      ...value,
-      photos: (value.photos || []).map((photo) => photo.id === id ? { ...photo, note } : photo)
-    });
-  }
-
-  function removePhoto(id: string) {
-    setValue({ ...value, photos: (value.photos || []).filter((photo) => photo.id !== id) });
-  }
-
   return (
     <div className="modal-stack">
-      <div className="editor-hint">通用智能体是全站后台规则：API 调用模型后，先套通用智能体，再套当前角色卡，最后生成用户看到的聊天回复。</div>
-      <label className="upload-button"><BookOpen size={16} />上传 .txt / JSON 智能体<input type="file" accept=".txt,text/plain,application/json" onChange={importAgentText} /></label>
-      <label>名称<input value={value.name} onChange={(event) => setValue({ ...value, name: event.target.value })} /></label>
-      <label>说明<input value={value.description} onChange={(event) => setValue({ ...value, description: event.target.value })} placeholder="例如：全站后台导演，控制回复格式、状态栏和记忆。" /></label>
-      <label>总规则<textarea value={value.systemPrompt} onChange={(event) => setValue({ ...value, systemPrompt: event.target.value })} placeholder="写全站通用规则，所有角色都会先经过这里。" /></label>
-      <label>回复风格<textarea value={value.replyStyle} onChange={(event) => setValue({ ...value, replyStyle: event.target.value })} placeholder="控制引号、动作括号、语言风格、沉浸感等。" /></label>
-      <label>状态栏规则<textarea value={value.statusRule} onChange={(event) => setValue({ ...value, statusRule: event.target.value })} placeholder="控制每轮 status_update 生成哪些字段、数值如何变化。" /></label>
-      <label>记忆规则<textarea value={value.memoryRule} onChange={(event) => setValue({ ...value, memoryRule: event.target.value })} placeholder="控制哪些内容写入长期记忆，如何摘要。" /></label>
-      <label className="upload-button"><ImagePlus size={16} />上传智能体参考图<input type="file" accept="image/*" onChange={uploadAgentPhoto} /></label>
-      {!!value.photos?.length && (
-        <div className="agent-photo-list">
-          {value.photos.map((photo) => (
-            <div className="agent-photo-item" key={photo.id}>
-              <img src={photo.url} alt="" />
-              <input value={photo.note} onChange={(event) => updatePhotoNote(photo.id, event.target.value)} placeholder="图片说明" />
-              <button className="danger-button" type="button" onClick={() => removePhoto(photo.id)}>删除</button>
-            </div>
-          ))}
-        </div>
-      )}
-      <button className="primary" onClick={onDone}><Save size={16} />保存通用智能体</button>
+      <label className="upload-button"><BookOpen size={16} />{uploadLabel}<input type="file" accept=".txt,text/plain,application/json" onChange={importAgentText} /></label>
+      <label>{"\u603b\u89c4\u5219"}<textarea value={value.systemPrompt} onChange={(event) => setValue({ ...value, systemPrompt: event.target.value, description: "", replyStyle: "", statusRule: "", memoryRule: "", photos: [] })} placeholder={placeholder} /></label>
+      <button className="primary" onClick={onDone}><Save size={16} />{saveLabel}</button>
     </div>
   );
 }
@@ -1209,7 +1238,6 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
     <div className="modal-stack">
       <label className="upload-button"><BookOpen size={16} />上传 .txt 角色卡<input type="file" accept=".txt,text/plain,application/json" onChange={importCharacterText} /></label>
       <label>角色名<input value={value.name} onChange={(event) => setValue({ ...value, name: event.target.value })} /></label>
-      <label>标签<input value={value.tags.join(", ")} onChange={(event) => setValue({ ...value, tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) })} /></label>
       <label>头像 URL<input value={value.avatarUrl || ""} onChange={(event) => setValue({ ...value, avatarUrl: event.target.value })} /></label>
       <label>角色简介<textarea value={value.profile} onChange={(event) => setValue({ ...value, profile: event.target.value })} /></label>
       <label>角色卡内容<textarea value={value.creatorNotes} onChange={(event) => setValue({ ...value, creatorNotes: event.target.value })} placeholder="上传 .txt 后会自动填入这里。" /></label>
