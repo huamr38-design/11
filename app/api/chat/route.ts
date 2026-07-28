@@ -228,7 +228,7 @@ export async function POST(request: Request) {
   const configuredWireApi = process.env.AI_WIRE_API || "chat";
   const wireApi = model?.toLowerCase().includes("grok") ? "chat" : configuredWireApi;
   const maxTokens = Math.max(400, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 1000)));
-  const timeoutMs = Math.max(15000, Math.min(55000, safeNumber(process.env.AI_TIMEOUT_MS, 55000)));
+  const timeoutMs = Math.max(15000, Math.min(48000, safeNumber(process.env.AI_TIMEOUT_MS, 45000)));
   const primaryTimeoutMs = timeoutMs;
   const rescueTimeoutMs = 10000;
   const fastSystemPrompt = buildFastSystemPrompt(body);
@@ -295,7 +295,26 @@ export async function POST(request: Request) {
     } catch (primaryError) {
       const primaryTimedOut = primaryError instanceof Error && primaryError.name === "AbortError";
       if (primaryTimedOut) timing.errorName = primaryError.name;
-      throw primaryError;
+      if (!primaryTimedOut || wireApi !== "chat") throw primaryError;
+      timing.fallbackUsed = true;
+      const fallbackStart = Date.now();
+      const rescuePrompt = buildRescueSystemPrompt(body);
+      rescueBody = JSON.stringify({
+        model,
+        temperature,
+        max_tokens: Math.min(120, maxTokens),
+        messages: [
+          ...recentMessages(body).slice(-2),
+          { role: "user", content: `${rescuePrompt}\n\n用户：${clip(body.userMessage, 1000)}` }
+        ]
+      });
+      timing.requestBytes = new TextEncoder().encode(rescueBody).length;
+      upstream = await fetchWithTimeout(
+        chatCompletionsUrl(baseUrl),
+        chatRequestInit(apiKey, rescueBody),
+        rescueTimeoutMs
+      );
+      timing.fallbackMs = Date.now() - fallbackStart;
     }
     timing.upstreamMs = Date.now() - upstreamStart;
     timing.upstreamStatus = upstream.status;
