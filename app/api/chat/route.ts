@@ -124,14 +124,16 @@ function buildFastSystemPrompt(body: ChatRequest) {
   const agent = body.backendAgent || {};
 
   return [
-    "请用中文自然回复，语气贴近下面的人物资料，正文不要太长。",
+    "请用中文自然完整回复，语气贴近下面的人物资料。主回复正文至少400个中文字符，除非用户明确要求极短回答。",
+    "说话内容和动作描写都要服务当前剧情，不要机械总结，不要输出状态栏；状态栏由后台单独生成。",
     `人物：${clip(character.name, 80)}`,
-    `资料：${clip(character.profile, 300)}`,
-    `性格：${clip(character.personality, 220)}`,
-    `场景：${clip(character.scenario, 220)}`,
-    `风格：${clip(agent.replyStyle || agent.systemPrompt, 220)}`,
-    `用户：${clip(body.userPersona || "", 180)}`,
-    `记忆：${clip(body.memory || "", 300)}`
+    `资料：${clip(character.profile, 900)}`,
+    `性格：${clip(character.personality, 700)}`,
+    `场景：${clip(character.scenario, 500)}`,
+    `作者设定：${clip(character.creatorNotes, 500)}`,
+    `风格：${clip([agent.systemPrompt, agent.replyStyle].filter(Boolean).join("\n"), 1200)}`,
+    `用户：${clip(body.userPersona || "", 300)}`,
+    `记忆：${clip(body.memory || "", 700)}`
   ].join("\n");
 }
 
@@ -149,9 +151,9 @@ function buildRescueSystemPrompt(body: ChatRequest) {
 }
 
 function recentMessages(body: ChatRequest) {
-  return (body.messages || []).slice(-4).map((message) => ({
+  return (body.messages || []).slice(-16).map((message) => ({
     role: message.role,
-    content: clip(message.content, 700)
+    content: clip(message.content, 600)
   }));
 }
 
@@ -222,7 +224,7 @@ export async function POST(request: Request) {
   const temperature = safeNumber(process.env.AI_TEMPERATURE, 0.85);
   const configuredWireApi = process.env.AI_WIRE_API || "chat";
   const wireApi = model?.toLowerCase().includes("grok") ? "chat" : configuredWireApi;
-  const maxTokens = Math.max(80, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 180)));
+  const maxTokens = Math.max(400, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 1600)));
   const timeoutMs = Math.max(15000, Math.min(55000, safeNumber(process.env.AI_TIMEOUT_MS, 55000)));
   const primaryTimeoutMs = timeoutMs;
   const rescueTimeoutMs = 10000;
