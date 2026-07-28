@@ -51,6 +51,8 @@ type ChatMessage = {
   content: string;
   createdAt: number;
   statusSnapshot?: StatusMap;
+  statusPending?: boolean;
+  statusError?: boolean;
 };
 
 type StatusMap = Record<string, string | number>;
@@ -197,12 +199,12 @@ function saveUserStateToServer(user: string, state: {
   userPersona: string;
   memoryLimit: number;
 }, token: string) {
-  if (!user.trim() || !token) return;
-  void fetch("/api/user-state", {
+  if (!user.trim() || !token) return Promise.resolve();
+  return fetch("/api/user-state", {
     method: "PUT",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ user, state })
-  }).catch(() => undefined);
+  }).then(() => undefined).catch(() => undefined);
 }
 
 function compactCharacterForChat(character: CharacterCard) {
@@ -247,6 +249,7 @@ export default function Home() {
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
+  const userStateSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const [currentUser, setCurrentUser] = useState("");
   const [currentToken, setCurrentToken] = useState("");
   const [loginName, setLoginName] = useState("");
@@ -366,7 +369,10 @@ export default function Home() {
 
   useEffect(() => {
     if (!currentUser || !currentToken || !accountReady) return;
-    saveUserStateToServer(currentUser, { messagesByCharacter, statusByCharacter, memoryByCharacter, contextLimitByCharacter, userPersona, memoryLimit }, currentToken);
+    const state = { messagesByCharacter, statusByCharacter, memoryByCharacter, contextLimitByCharacter, userPersona, memoryLimit };
+    userStateSaveQueueRef.current = userStateSaveQueueRef.current
+      .catch(() => undefined)
+      .then(() => saveUserStateToServer(currentUser, state, currentToken));
   }, [currentUser, currentToken, accountReady, messagesByCharacter, statusByCharacter, memoryByCharacter, contextLimitByCharacter, userPersona, memoryLimit]);
 
   const activeCharacter = useMemo(
@@ -403,6 +409,21 @@ export default function Home() {
 
   function setMessagesForCharacter(characterId: string, next: ChatMessage[]) {
     setMessagesByCharacter((current) => ({ ...current, [characterId]: next }));
+  }
+
+  function appendMessageForCharacter(characterId: string, message: ChatMessage) {
+    setMessagesByCharacter((current) => {
+      const currentMessages = current[characterId] || [];
+      if (currentMessages.some((item) => item.id === message.id)) return current;
+      return { ...current, [characterId]: [...currentMessages, message] };
+    });
+  }
+
+  function updateMessageForCharacter(characterId: string, messageId: string, updater: (message: ChatMessage) => ChatMessage) {
+    setMessagesByCharacter((current) => ({
+      ...current,
+      [characterId]: (current[characterId] || []).map((message) => (message.id === messageId ? updater(message) : message))
+    }));
   }
 
   function setStatusForCharacter(characterId: string, next: StatusMap) {
@@ -601,34 +622,36 @@ export default function Home() {
           userMessage: args.userMessage,
           assistantReply: args.assistantReply,
           previousStatus: args.previousStatus,
-          memory: args.memory
-          ,
+          memory: args.memory,
           backendAgent: compactDirectorForChat(director),
           statusAgent: compactDirectorForChat(args.character.statusPrompt?.trim() ? { ...statusAgent, systemPrompt: args.character.statusPrompt } : statusAgent)
         })
       });
       const data = await response.json().catch(() => null);
-      if (!response.ok || !data) return;
+      if (!response.ok || !data) throw new Error("status update failed");
 
       const statusUpdate = data.statusUpdate && Object.keys(data.statusUpdate).length ? data.statusUpdate : null;
-      const nextStatus = statusUpdate ? { ...args.previousStatus, ...statusUpdate } : args.previousStatus;
-      if (statusUpdate) {
-        setStatusForCharacter(args.characterId, nextStatus);
-        setMessagesByCharacter((current) => ({
-          ...current,
-          [args.characterId]: (current[args.characterId] || []).map((message) =>
-            message.id === args.assistantMessageId ? { ...message, statusSnapshot: nextStatus } : message
-          )
-        }));
-      }
+      if (!statusUpdate) throw new Error("status update empty");
+
+      const nextStatus = { ...args.previousStatus, ...statusUpdate };
+      setStatusForCharacter(args.characterId, nextStatus);
+      updateMessageForCharacter(args.characterId, args.assistantMessageId, (message) => ({
+        ...message,
+        statusSnapshot: nextStatus,
+        statusPending: false,
+        statusError: false
+      }));
       if (data.memoryUpdate) {
         setMemoryForCharacter(args.characterId, [args.memory, data.memoryUpdate].filter(Boolean).join("\n"));
       }
     } catch {
-      // 状态栏是后台增强，失败时不影响已经返回的聊天内容。
+      updateMessageForCharacter(args.characterId, args.assistantMessageId, (message) => ({
+        ...message,
+        statusPending: false,
+        statusError: true
+      }));
     }
   }
-
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
     await sendDraftMessage();
@@ -639,7 +662,6 @@ export default function Home() {
     if (!text || busy) return;
 
     const userMessage: ChatMessage = { id: uid("message"), role: "user", content: text, createdAt: Date.now() };
-    const nextMessages = [...messages, userMessage];
     const requestCharacter = activeCharacter;
     const requestCharacterId = requestCharacter.id;
     const requestMessages = messages;
@@ -647,7 +669,8 @@ export default function Home() {
     const requestMemory = memory;
     const requestUserPersona = userPersona;
     const requestContextMessageLimit = contextMessageLimit;
-    setMessagesForCharacter(requestCharacterId, nextMessages);
+
+    appendMessageForCharacter(requestCharacterId, userMessage);
     setDraft("");
     setBusyCharacterId(requestCharacterId);
     setError("");
@@ -673,24 +696,24 @@ export default function Home() {
         const timing = data?.timing;
         const timingParts = timing
           ? [
-              timing.serverTotalMs ? `服务器 ${Math.round(timing.serverTotalMs / 1000)} 秒` : "",
-              timing.upstreamMs ? `上游 ${Math.round(timing.upstreamMs / 1000)} 秒` : "",
-              timing.requestBytes ? `请求 ${Math.max(1, Math.round(timing.requestBytes / 1024))} KB` : "",
-              timing.fallbackUsed ? "已尝试极速兜底" : ""
+              timing.serverTotalMs ? `server ${Math.round(timing.serverTotalMs / 1000)}s` : "",
+              timing.upstreamMs ? `upstream ${Math.round(timing.upstreamMs / 1000)}s` : "",
+              timing.requestBytes ? `request ${Math.max(1, Math.round(timing.requestBytes / 1024))} KB` : "",
+              timing.fallbackUsed ? "fallback used" : ""
             ].filter(Boolean)
           : [];
-        const timingText = timingParts.length ? `（${timingParts.join("，")}）` : "";
-        throw new Error(`${data?.error || "请求失败"}${timingText}`);
+        const timingText = timingParts.length ? ` (${timingParts.join(", ")})` : "";
+        throw new Error(`${data?.error || "\u8bf7\u6c42\u5931\u8d25"}${timingText}`);
       }
 
       const assistantMessage: ChatMessage = {
         id: uid("message"),
         role: "assistant",
-        content: data.reply || "“我在。”",
+        content: data.reply || "\u6211\u5728\u3002",
         createdAt: Date.now(),
-        statusSnapshot: requestStatus
+        statusPending: true
       };
-      setMessagesForCharacter(requestCharacterId, [...nextMessages, assistantMessage]);
+      appendMessageForCharacter(requestCharacterId, assistantMessage);
       void updateStatusAfterReply({
         characterId: requestCharacterId,
         assistantMessageId: assistantMessage.id,
@@ -702,12 +725,12 @@ export default function Home() {
         memory: requestMemory
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "发送失败");
-      setMessagesForCharacter(requestCharacterId, requestMessages);
+      setError(err instanceof Error ? err.message : "\u53d1\u9001\u5931\u8d25");
     } finally {
       setBusyCharacterId((current) => (current === requestCharacterId ? "" : current));
     }
   }
+
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
@@ -891,7 +914,15 @@ export default function Home() {
               <div className={`xc-message ${message.role}`} key={message.id}>
                 <span>{message.role === "user" ? "你" : activeCharacter.name}</span>
                 <p>{renderMessageContent(message.content)}</p>
-                {message.role === "assistant" && <RoleStatusCard characterName={activeCharacter.name} status={message.statusSnapshot || visibleStatus} />}
+                {message.role === "assistant" && (
+                  message.statusPending ? (
+                    <RoleStatusNotice text="状态栏生成中..." />
+                  ) : message.statusError ? (
+                    <RoleStatusNotice text="状态栏更新失败，聊天内容已保存。" />
+                  ) : (
+                    <RoleStatusCard characterName={activeCharacter.name} status={message.statusSnapshot || visibleStatus} />
+                  )
+                )}
               </div>
             ))
           )}
@@ -1309,6 +1340,17 @@ function BackgroundEditor({ background, setBackground, onDone }: { background: B
       <label>透明度<input type="range" min="0" max="0.8" step="0.05" value={background.opacity} onChange={(event) => setBackground({ ...background, opacity: Number(event.target.value) })} /></label>
       <label className="upload-button"><ImagePlus size={16} />上传背景图<input type="file" accept="image/*" onChange={uploadBackground} /></label>
       <button className="primary" onClick={onDone}><Save size={16} />保存</button>
+    </div>
+  );
+}
+
+function RoleStatusNotice({ text }: { text: string }) {
+  return (
+    <div className="role-status-card role-status-notice">
+      <div className="role-status-head">
+        <strong>{text}</strong>
+        <span>STATUS</span>
+      </div>
     </div>
   );
 }

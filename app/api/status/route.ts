@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const preferredRegion = "iad1";
-export const maxDuration = 20;
+export const maxDuration = 30;
 
 type BackendAgent = {
   name?: string;
@@ -150,7 +150,7 @@ export async function POST(request: Request) {
   const model = process.env.AI_MODEL;
   const baseUrl = (rawBaseUrl || "").replace(/\/$/, "");
   const temperature = safeNumber(process.env.AI_TEMPERATURE, 0.55);
-  const timeoutMs = Math.max(6000, Math.min(15000, safeNumber(process.env.AI_STATUS_TIMEOUT_MS, 12000)));
+  const timeoutMs = Math.max(6000, Math.min(25000, safeNumber(process.env.AI_STATUS_TIMEOUT_MS, 22000)));
 
   if (!apiKey || !baseUrl || !model) {
     return NextResponse.json({ statusUpdate: fallbackStatus(body), memoryUpdate: "" });

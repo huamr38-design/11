@@ -548,6 +548,15 @@ textarea {
   width: 100%;
 }
 
+.role-status-notice {
+  padding: 12px 14px;
+  opacity: 0.92;
+}
+
+.role-status-notice .role-status-head {
+  margin-bottom: 0;
+}
+
 .role-status-head {
   display: flex;
   align-items: center;
