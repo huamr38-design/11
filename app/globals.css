@@ -584,6 +584,31 @@ textarea {
   gap: 7px;
 }
 
+.role-status-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.role-status-group {
+  display: grid;
+  gap: 8px;
+}
+
+.role-status-group + .role-status-group {
+  border-top: 1px solid rgba(159, 216, 255, 0.18);
+  padding-top: 12px;
+}
+
+.role-status-group-title {
+  width: fit-content;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.18);
+  color: #d9f1ff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+}
+
 .role-status-row {
   display: grid;
   grid-template-columns: 104px 10px 1fr;

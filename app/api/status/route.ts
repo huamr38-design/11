@@ -14,6 +14,7 @@ type StatusRequest = {
     name?: string;
     tags?: string[];
     statusPrompt?: string;
+    statusNames?: string[];
     profile?: string;
     personality?: string;
     scenario?: string;
@@ -38,6 +39,11 @@ function clip(value: unknown, limit: number) {
 function safeNumber(value: unknown, fallback: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function cleanStatusNames(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.map(String).map((item) => item.trim()).filter(Boolean).slice(0, 12);
 }
 
 function chatCompletionsUrl(baseUrl: string) {
@@ -72,6 +78,17 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 function buildStatusPrompt(body: StatusRequest) {
   const character = body.character || {};
   const statusRule = String(character.statusPrompt || body.statusAgent?.systemPrompt || "").trim();
+  const statusNames = cleanStatusNames(character.statusNames);
+  const multiRoleRule = statusNames.length
+    ? [
+        "Multi-character status mode is ON.",
+        `The status character names are: ${statusNames.join(", ")}`,
+        "You must return status_update as an object whose top-level keys are exactly these names.",
+        "Each top-level character value must be a separate status object.",
+        "Never merge multiple characters into one shared status object.",
+        "If a character did not appear this round, keep or gently update that character's previous status."
+      ].join("\n")
+    : "";
   const defaultRule = [
     "你是独立的状态栏智能体，只负责根据本轮对话更新聊天下方的状态栏和长期记忆。",
     "状态栏必须跟随角色卡、通用智能体、用户本轮发言、角色本轮回复、上一轮状态变化。",
@@ -80,6 +97,7 @@ function buildStatusPrompt(body: StatusRequest) {
 
   return [
     statusRule ? `Status bar agent rule:\n${clip(statusRule, 1800)}` : defaultRule,
+    multiRoleRule,
     `通用智能体总规则摘要：\n${clip(body.backendAgent?.systemPrompt || "", 900)}`,
     `角色名：${clip(character.name || "角色", 80)}`,
     `角色资料：${clip(character.profile, 500)}`,
@@ -98,7 +116,7 @@ function buildStatusPrompt(body: StatusRequest) {
   ].join("\n\n");
 }
 
-function normalizeStatus(value: unknown) {
+function normalizeFlatStatus(value: unknown) {
   if (!value || typeof value !== "object") return {};
   const raw = value as Record<string, unknown>;
   const next: Record<string, string | number> = {};
@@ -110,6 +128,20 @@ function normalizeStatus(value: unknown) {
     }
   }
   return next;
+}
+
+function normalizeStatus(value: unknown, statusNames: string[]) {
+  const flat = normalizeFlatStatus(value);
+  if (!statusNames.length) return flat;
+  const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const grouped: Record<string, Record<string, string | number>> = {};
+
+  for (const name of statusNames) {
+    const direct = normalizeFlatStatus(raw[name]);
+    grouped[name] = Object.keys(direct).length ? direct : flat;
+  }
+
+  return grouped;
 }
 
 function clampPercent(value: unknown, fallback: number, delta: number) {
@@ -125,7 +157,7 @@ function fallbackStatus(body: StatusRequest) {
   const calmWords = /你好|在吗|吃饭|工作|今天|聊天|普通|随便/.test(combined);
   const delta = warmWords ? intensity : calmWords ? 1 : Math.max(1, Math.floor(intensity / 2));
 
-  return {
+  const next = {
     当前阶段: String(previous.当前阶段 || "持续交流"),
     调戏兴致: clampPercent(previous.调戏兴致, 35, delta),
     脸红度: clampPercent(previous.脸红度, 20, warmWords ? delta : 1),
@@ -141,6 +173,9 @@ function fallbackStatus(body: StatusRequest) {
     当前穿着: String(previous.当前穿着 || "日常服装"),
     身体反应: warmWords ? "呼吸略乱" : "呼吸平稳"
   };
+  const statusNames = cleanStatusNames(body.character?.statusNames);
+  if (!statusNames.length) return next;
+  return Object.fromEntries(statusNames.map((name) => [name, next]));
 }
 
 export async function POST(request: Request) {
@@ -182,7 +217,7 @@ export async function POST(request: Request) {
     if (!parsed) {
       return NextResponse.json({ statusUpdate: fallbackStatus(body), memoryUpdate: "" });
     }
-    const statusUpdate = normalizeStatus(parsed.status_update || parsed.statusUpdate);
+    const statusUpdate = normalizeStatus(parsed.status_update || parsed.statusUpdate, cleanStatusNames(body.character?.statusNames));
 
     return NextResponse.json({
       statusUpdate: Object.keys(statusUpdate).length ? statusUpdate : fallbackStatus(body),

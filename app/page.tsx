@@ -27,6 +27,7 @@ type CharacterCard = {
   tags: string[];
   avatarUrl?: string;
   statusPrompt?: string;
+  statusNames?: string[];
   profile: string;
   personality: string;
   scenario: string;
@@ -55,7 +56,8 @@ type ChatMessage = {
   statusError?: boolean;
 };
 
-type StatusMap = Record<string, string | number>;
+type FlatStatusMap = Record<string, string | number>;
+type StatusMap = Record<string, string | number | FlatStatusMap>;
 
 type BackgroundSettings = {
   color: string;
@@ -80,6 +82,7 @@ const starterCharacters: CharacterCard[] = [
     tags: ["成年人", "私密聊天", "慢热关系"],
     avatarUrl: "",
     statusPrompt: "",
+    statusNames: [],
     profile: "25 岁，独立设计师。外表清冷、礼貌，熟悉后会露出柔软和调皮的一面。所有设定均为成年人私密角色扮演。",
     personality: "说话自然，有情绪起伏。对话内容用中文引号，动作和心理描写用括号。保持沉浸，但不要像客服，也不要机械总结。",
     scenario: "夜晚的客厅，窗外有城市灯光。她刚洗完手坐下，像是在等你开口。",
@@ -220,6 +223,19 @@ function compactDirectorForChat(agent: BackendAgent) {
       url: photo.url?.startsWith("data:") ? "" : photo.url
     }))
   };
+}
+
+function cleanStatusNames(value: unknown) {
+  const source = Array.isArray(value) ? value.join("\n") : String(value || "");
+  return source
+    .split(/[\n,，、;；|]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function isFlatStatusMap(value: unknown): value is FlatStatusMap {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && Object.values(value as Record<string, unknown>).every((entry) => typeof entry === "string" || typeof entry === "number"));
 }
 
 export default function Home() {
@@ -482,6 +498,7 @@ export default function Home() {
       tags: ["成年人"],
       avatarUrl: "",
       statusPrompt: "",
+      statusNames: [],
       profile: "从管理员新增的角色卡。",
       personality: "",
       scenario: "私人聊天",
@@ -920,7 +937,7 @@ export default function Home() {
                   ) : message.statusError ? (
                     <RoleStatusNotice text="状态栏更新失败，聊天内容已保存。" />
                   ) : (
-                    <RoleStatusCard characterName={activeCharacter.name} status={message.statusSnapshot || visibleStatus} />
+                    <RoleStatusCardV2 characterName={activeCharacter.name} status={message.statusSnapshot || visibleStatus} />
                   )
                 )}
               </div>
@@ -1282,6 +1299,7 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
         tags: Array.isArray(parsed.tags) ? parsed.tags.map(String) : value.tags,
         avatarUrl: String(parsed.avatarUrl || parsed.avatar || value.avatarUrl || ""),
         statusPrompt: String(parsed.statusPrompt || parsed.status_prompt || parsed.statusAgent || parsed.status_agent || parsed.status || value.statusPrompt || ""),
+        statusNames: cleanStatusNames(parsed.statusNames || parsed.status_names || parsed.statusCharacters || parsed.status_characters || parsed["\u72b6\u6001\u680f\u89d2\u8272\u540d\u5355"] || value.statusNames || []),
         profile: String(parsed.profile || parsed.description || parsed.background || value.profile || ""),
         personality: String(parsed.personality || parsed.persona || parsed.speaking_style || value.personality || ""),
         scenario: String(parsed.scenario || parsed.opening_scene || value.scenario || ""),
@@ -1294,6 +1312,7 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
         name: value.name || fileName,
         tags: value.tags.length ? value.tags : ["成年人"],
         statusPrompt: value.statusPrompt || "",
+        statusNames: value.statusNames || [],
         creatorNotes: text,
         profile: value.profile || "从 txt 文件导入的角色卡。",
         personality: value.personality || "沿用导入文本中的角色性格和说话方式。",
@@ -1310,6 +1329,7 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
       <label>角色名<input value={value.name} onChange={(event) => setValue({ ...value, name: event.target.value })} /></label>
       <label>头像 URL<input value={value.avatarUrl || ""} onChange={(event) => setValue({ ...value, avatarUrl: event.target.value })} /></label>
       <label>{"\u72b6\u6001\u680f\u667a\u80fd\u4f53"}<textarea value={value.statusPrompt || ""} onChange={(event) => setValue({ ...value, statusPrompt: event.target.value })} placeholder={"\u8fd9\u5f20\u89d2\u8272\u5361\u4e13\u5c5e\u7684\u72b6\u6001\u680f\u89c4\u5219\u3002\u5982\u679c\u8fd9\u91cc\u586b\u4e86\uff0c\u5c31\u4e0d\u4f7f\u7528\u9ed8\u8ba4\u72b6\u6001\u680f\u667a\u80fd\u4f53\u3002"} /></label>
+      <label>{"\u72b6\u6001\u680f\u89d2\u8272\u540d\u5355"}<textarea value={(value.statusNames || []).join("\n")} onChange={(event) => setValue({ ...value, statusNames: cleanStatusNames(event.target.value) })} placeholder={"\u6bcf\u884c\u4e00\u4e2a\u89d2\u8272\u540d\u3002\u586b\u4e86\u4ee5\u540e\uff0c\u72b6\u6001\u680f\u4f1a\u6309\u8fd9\u4e9b\u540d\u5b57\u5206\u522b\u751f\u6210\u3002"} /></label>
       <label>角色简介<textarea value={value.profile} onChange={(event) => setValue({ ...value, profile: event.target.value })} /></label>
       <label>角色卡内容<textarea value={value.creatorNotes} onChange={(event) => setValue({ ...value, creatorNotes: event.target.value })} placeholder="上传 .txt 后会自动填入这里。" /></label>
       <div className="character-image-row">
@@ -1355,7 +1375,49 @@ function RoleStatusNotice({ text }: { text: string }) {
   );
 }
 
-function RoleStatusCard({ characterName, status }: { characterName: string; status: StatusMap }) {
+function RoleStatusCardV2({ characterName, status }: { characterName: string; status: StatusMap }) {
+  const orderedKeys = ["\u5f53\u524d\u9636\u6bb5", "\u5fc3\u60c5", "\u4f4d\u7f6e", "\u52a8\u4f5c", "\u5bf9\u7528\u6237\u6001\u5ea6", "\u8bed\u6c14", "\u773c\u795e", "\u7a7f\u7740", "\u8eab\u4f53\u53cd\u5e94"];
+  const groupedEntries = Object.entries(status).filter(([, value]) => isFlatStatusMap(value)) as Array<[string, FlatStatusMap]>;
+  const hasGroups = groupedEntries.length > 0 && groupedEntries.length === Object.keys(status).length;
+  const groups = hasGroups ? groupedEntries : [[characterName, status as FlatStatusMap] as [string, FlatStatusMap]];
+
+  function rowsFor(groupStatus: FlatStatusMap) {
+    const extraKeys = Object.keys(groupStatus).filter((key) => !orderedKeys.includes(key));
+    return [...orderedKeys, ...extraKeys]
+      .filter((key) => groupStatus[key] !== undefined && groupStatus[key] !== "")
+      .map((key) => ({ key, value: groupStatus[key] }));
+  }
+
+  return (
+    <div className="role-status-card">
+      <div className="role-status-head">
+        <strong>{characterName}</strong>
+        <span>STATUS</span>
+      </div>
+      <div className="role-status-groups">
+        {groups.map(([groupName, groupStatus]) => (
+          <div className="role-status-group" key={groupName}>
+            {hasGroups && <div className="role-status-group-title">{groupName}</div>}
+            <div className="role-status-list">
+              {rowsFor(groupStatus).map(({ key, value }) => {
+                const percent = parsePercent(value);
+                return (
+                  <div className="role-status-row" key={`${groupName}-${key}`}>
+                    <span className="status-label">{key}</span>
+                    <span className="status-dot">-</span>
+                    {percent === null ? <strong className="status-text">{String(value)}</strong> : <div className="status-meter"><i style={{ width: `${percent}%` }} /><b>{percent}%</b></div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RoleStatusCard({ characterName, status }: { characterName: string; status: FlatStatusMap }) {
   const orderedKeys = ["当前阶段", "调戏兴致", "脸红度", "身体燥热", "隐秘湿润", "禁忌感", "涵湿状态", "衣衫完整度", "当前位置", "心理状态", "语气", "眼神", "当前穿着", "身体反应"];
   const iconMap: Record<string, string> = {
     当前阶段: "🎭",

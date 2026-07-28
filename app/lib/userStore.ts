@@ -4,7 +4,7 @@ import path from "path";
 
 export type UserState = {
   messagesByCharacter?: Record<string, unknown[]>;
-  statusByCharacter?: Record<string, Record<string, string | number>>;
+  statusByCharacter?: Record<string, Record<string, string | number | Record<string, string | number>>>;
   memoryByCharacter?: Record<string, string>;
   contextLimitByCharacter?: Record<string, number>;
   userPersona?: string;

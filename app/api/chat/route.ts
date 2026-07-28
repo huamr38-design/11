@@ -14,6 +14,7 @@ type CharacterCard = {
   name: string;
   tags?: string[];
   statusPrompt?: string;
+  statusNames?: string[];
   profile?: string;
   personality?: string;
   scenario?: string;
