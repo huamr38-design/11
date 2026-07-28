@@ -6,6 +6,7 @@ export type UserState = {
   messagesByCharacter?: Record<string, unknown[]>;
   statusByCharacter?: Record<string, Record<string, string | number>>;
   memoryByCharacter?: Record<string, string>;
+  contextLimitByCharacter?: Record<string, number>;
   userPersona?: string;
   memoryLimit?: number;
 };
@@ -62,6 +63,7 @@ function cleanState(state: UserState): UserState {
     messagesByCharacter: state.messagesByCharacter || {},
     statusByCharacter: state.statusByCharacter || {},
     memoryByCharacter: state.memoryByCharacter || {},
+    contextLimitByCharacter: state.contextLimitByCharacter || {},
     userPersona: String(state.userPersona || ""),
     memoryLimit: Math.max(1000, Math.min(50000, Number(state.memoryLimit || 7000)))
   };

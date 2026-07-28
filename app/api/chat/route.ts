@@ -39,6 +39,7 @@ type ChatRequest = {
   status?: Record<string, string | number>;
   memory?: string;
   memoryLimit?: number;
+  contextMessageLimit?: number;
   userMessage: string;
 };
 
@@ -151,7 +152,8 @@ function buildRescueSystemPrompt(body: ChatRequest) {
 }
 
 function recentMessages(body: ChatRequest) {
-  return (body.messages || []).slice(-16).map((message) => ({
+  const limit = Math.max(2, Math.min(24, safeNumber(body.contextMessageLimit, 8)));
+  return (body.messages || []).slice(-limit).map((message) => ({
     role: message.role,
     content: clip(message.content, 600)
   }));

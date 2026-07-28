@@ -19,7 +19,7 @@ import {
   UserCircle,
   X
 } from "lucide-react";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
 
 type CharacterCard = {
   id: string;
@@ -172,6 +172,7 @@ function saveUserStateToServer(user: string, state: {
   messagesByCharacter: Record<string, ChatMessage[]>;
   statusByCharacter: Record<string, StatusMap>;
   memoryByCharacter: Record<string, string>;
+  contextLimitByCharacter: Record<string, number>;
   userPersona: string;
   memoryLimit: number;
 }, token: string) {
@@ -205,6 +206,7 @@ export default function Home() {
   const [messagesByCharacter, setMessagesByCharacter] = useState<Record<string, ChatMessage[]>>({});
   const [statusByCharacter, setStatusByCharacter] = useState<Record<string, StatusMap>>({});
   const [memoryByCharacter, setMemoryByCharacter] = useState<Record<string, string>>({});
+  const [contextLimitByCharacter, setContextLimitByCharacter] = useState<Record<string, number>>({});
   const [memoryLimit, setMemoryLimit] = useState(7000);
   const [userPersona, setUserPersona] = useState("");
   const [background, setBackground] = useState<BackgroundSettings>(defaultBackground);
@@ -238,6 +240,7 @@ export default function Home() {
     setMessagesByCharacter(safeJsonParse(localStorage.getItem("messagesByCharacter"), {}));
     setStatusByCharacter(safeJsonParse(localStorage.getItem("statusByCharacter"), {}));
     setMemoryByCharacter(safeJsonParse(localStorage.getItem("memoryByCharacter"), {}));
+    setContextLimitByCharacter(safeJsonParse(localStorage.getItem("contextLimitByCharacter"), {}));
     setMemoryLimit(Number(localStorage.getItem("memoryLimit") || "7000"));
     setUserPersona(localStorage.getItem("userPersona") || "");
     const savedUser = localStorage.getItem("currentUser") || "";
@@ -294,6 +297,7 @@ export default function Home() {
   useEffect(() => localStorage.setItem("messagesByCharacter", JSON.stringify(messagesByCharacter)), [messagesByCharacter]);
   useEffect(() => localStorage.setItem("statusByCharacter", JSON.stringify(statusByCharacter)), [statusByCharacter]);
   useEffect(() => localStorage.setItem("memoryByCharacter", JSON.stringify(memoryByCharacter)), [memoryByCharacter]);
+  useEffect(() => localStorage.setItem("contextLimitByCharacter", JSON.stringify(contextLimitByCharacter)), [contextLimitByCharacter]);
   useEffect(() => localStorage.setItem("memoryLimit", String(memoryLimit)), [memoryLimit]);
   useEffect(() => localStorage.setItem("userPersona", userPersona), [userPersona]);
   useEffect(() => localStorage.setItem("chatBackground", JSON.stringify(background)), [background]);
@@ -314,6 +318,7 @@ export default function Home() {
           setMessagesByCharacter(state.messagesByCharacter || {});
           setStatusByCharacter(state.statusByCharacter || {});
           setMemoryByCharacter(state.memoryByCharacter || {});
+          setContextLimitByCharacter(state.contextLimitByCharacter || {});
           setUserPersona(state.userPersona || "");
           setMemoryLimit(Number(state.memoryLimit || 7000));
         }
@@ -324,8 +329,8 @@ export default function Home() {
 
   useEffect(() => {
     if (!currentUser || !currentToken || !accountReady) return;
-    saveUserStateToServer(currentUser, { messagesByCharacter, statusByCharacter, memoryByCharacter, userPersona, memoryLimit }, currentToken);
-  }, [currentUser, currentToken, accountReady, messagesByCharacter, statusByCharacter, memoryByCharacter, userPersona, memoryLimit]);
+    saveUserStateToServer(currentUser, { messagesByCharacter, statusByCharacter, memoryByCharacter, contextLimitByCharacter, userPersona, memoryLimit }, currentToken);
+  }, [currentUser, currentToken, accountReady, messagesByCharacter, statusByCharacter, memoryByCharacter, contextLimitByCharacter, userPersona, memoryLimit]);
 
   const activeCharacter = useMemo(
     () => characters.find((item) => item.id === activeCharacterId) || characters[0],
@@ -335,6 +340,7 @@ export default function Home() {
   const messages = messagesByCharacter[activeCharacter.id] || [];
   const visibleStatus = { ...defaultStatus, ...(statusByCharacter[activeCharacter.id] || {}) };
   const memory = memoryByCharacter[activeCharacter.id] || "";
+  const contextMessageLimit = contextLimitByCharacter[activeCharacter.id] || 8;
   const busy = busyCharacterId === activeCharacter.id;
 
   function setActiveMessages(next: ChatMessage[]) {
@@ -359,6 +365,17 @@ export default function Home() {
 
   function setMemoryForCharacter(characterId: string, next: string) {
     setMemoryByCharacter((current) => ({ ...current, [characterId]: next }));
+  }
+
+  function setContextLimitForCharacter(characterId: string, next: number) {
+    setContextLimitByCharacter((current) => ({ ...current, [characterId]: next }));
+  }
+
+  function cycleContextLimit() {
+    const options = [4, 8, 16, 24];
+    const index = options.indexOf(contextMessageLimit);
+    const next = options[(index + 1) % options.length] || 8;
+    setContextLimitForCharacter(activeCharacter.id, next);
   }
 
   function updateDirector(next: BackendAgent) {
@@ -485,6 +502,7 @@ export default function Home() {
     setMessagesByCharacter({});
     setStatusByCharacter({});
     setMemoryByCharacter({});
+    setContextLimitByCharacter({});
     setUserPersona("");
     localStorage.removeItem("currentUser");
     localStorage.removeItem("currentToken");
@@ -537,6 +555,10 @@ export default function Home() {
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
+    await sendDraftMessage();
+  }
+
+  async function sendDraftMessage() {
     const text = draft.trim();
     if (!text || busy) return;
 
@@ -548,6 +570,7 @@ export default function Home() {
     const requestStatus = visibleStatus;
     const requestMemory = memory;
     const requestUserPersona = userPersona;
+    const requestContextMessageLimit = contextMessageLimit;
     setMessagesForCharacter(requestCharacterId, nextMessages);
     setDraft("");
     setBusyCharacterId(requestCharacterId);
@@ -565,6 +588,7 @@ export default function Home() {
           status: requestStatus,
           memory: requestMemory,
           memoryLimit,
+          contextMessageLimit: requestContextMessageLimit,
           userMessage: text
         })
       });
@@ -607,6 +631,12 @@ export default function Home() {
     } finally {
       setBusyCharacterId((current) => (current === requestCharacterId ? "" : current));
     }
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    void sendDraftMessage();
   }
 
   if (maintenance.enabled && !isAdmin) {
@@ -808,7 +838,16 @@ export default function Home() {
           <button type="button" className="composer-memory-button" onClick={() => setPanel("memory")} title="记忆设置">
             <BookOpen size={18} />
           </button>
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="输入你要说的话..." rows={2} />
+          <button type="button" className="composer-context-button" onClick={cycleContextLimit} title="上下文长度：点击切换 4 / 8 / 16 / 24 条">
+            {contextMessageLimit}条
+          </button>
+          <textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={handleComposerKeyDown}
+            placeholder="输入你要说的话..."
+            rows={2}
+          />
           <button disabled={busy || !draft.trim()} title="发送"><Send size={18} /></button>
         </form>
       </section>

@@ -632,7 +632,7 @@ textarea {
   position: sticky;
   bottom: 0;
   display: grid;
-  grid-template-columns: 44px 1fr 48px;
+  grid-template-columns: 44px 54px 1fr 48px;
   gap: 10px;
   align-items: end;
   padding: 14px 22px 22px;
@@ -645,6 +645,19 @@ textarea {
   align-self: end;
   color: #147fbd;
   background: rgba(255, 255, 255, 0.7);
+}
+
+.composer-context-button {
+  align-self: end;
+  min-width: 54px;
+  height: 48px;
+  padding: 0 8px;
+  border-color: rgba(57, 169, 232, 0.32);
+  background: rgba(255, 255, 255, 0.72);
+  color: #147fbd;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .xc-composer textarea {
@@ -1063,7 +1076,13 @@ textarea {
   }
 
   .xc-composer {
-    grid-template-columns: 42px 1fr 44px;
+    grid-template-columns: 42px 50px 1fr 44px;
     padding: 10px 12px 12px;
+  }
+
+  .composer-context-button {
+    min-width: 50px;
+    padding: 0 6px;
+    font-size: 12px;
   }
 }
