@@ -222,6 +222,7 @@ export default function Home() {
   const [panel, setPanel] = useState<"none" | "admin" | "persona" | "background" | "memory" | "character" | "agent" | "account" | "maintenance">("none");
   const [chatOpen, setChatOpen] = useState(false);
   const [homeMenuOpen, setHomeMenuOpen] = useState(false);
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState("");
   const [currentToken, setCurrentToken] = useState("");
   const [loginName, setLoginName] = useState("");
@@ -376,6 +377,10 @@ export default function Home() {
     const index = options.indexOf(contextMessageLimit);
     const next = options[(index + 1) % options.length] || 8;
     setContextLimitForCharacter(activeCharacter.id, next);
+  }
+
+  function insertComposerTemplate(left: string, right: string) {
+    setDraft((current) => `${current}${current && !current.endsWith("\n") ? "\n" : ""}${left}${right}`);
   }
 
   function updateDirector(next: BackendAgent) {
@@ -835,12 +840,21 @@ export default function Home() {
         {error && <div className="error-line">{error}</div>}
 
         <form className="xc-composer" onSubmit={sendMessage}>
-          <button type="button" className="composer-memory-button" onClick={() => setPanel("memory")} title="记忆设置">
-            <BookOpen size={18} />
-          </button>
-          <button type="button" className="composer-context-button" onClick={cycleContextLimit} title="上下文长度：点击切换 4 / 8 / 16 / 24 条">
-            {contextMessageLimit}条
-          </button>
+          <div className="composer-quick-row">
+            <button type="button" onClick={() => insertComposerTemplate("“", "”")}>说话 “...”</button>
+            <button type="button" onClick={() => insertComposerTemplate("（", "）")}>行动 （...）</button>
+          </div>
+          <div className="composer-settings-wrap">
+            <button type="button" className="composer-settings-button" onClick={() => setComposerMenuOpen((value) => !value)} title="模型设定">
+              <Settings size={18} />
+            </button>
+            {composerMenuOpen && (
+              <div className="composer-settings-menu">
+                <button type="button" onClick={() => { setPanel("memory"); setComposerMenuOpen(false); }}><BookOpen size={15} />记忆设置</button>
+                <button type="button" onClick={cycleContextLimit}>{contextMessageLimit}条上下文</button>
+              </div>
+            )}
+          </div>
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}

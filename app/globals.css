@@ -519,6 +519,7 @@ textarea {
 
 .xc-message.user > p {
   background: var(--user);
+  color: #111827;
 }
 
 .dialogue-text {
@@ -527,8 +528,8 @@ textarea {
 }
 
 .action-text {
-  color: #8b5cf6;
-  font-weight: 700;
+  color: inherit;
+  font-weight: inherit;
 }
 
 .role-status-card {
@@ -632,7 +633,8 @@ textarea {
   position: sticky;
   bottom: 0;
   display: grid;
-  grid-template-columns: 44px 54px 1fr 48px;
+  grid-template-columns: 44px 1fr 48px;
+  grid-template-rows: auto auto;
   gap: 10px;
   align-items: end;
   padding: 14px 22px 22px;
@@ -641,20 +643,61 @@ textarea {
   backdrop-filter: blur(10px);
 }
 
-.composer-memory-button {
-  align-self: end;
-  color: #147fbd;
-  background: rgba(255, 255, 255, 0.7);
+.composer-quick-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-left: 54px;
 }
 
-.composer-context-button {
-  align-self: end;
-  min-width: 54px;
-  height: 48px;
-  padding: 0 8px;
-  border-color: rgba(57, 169, 232, 0.32);
-  background: rgba(255, 255, 255, 0.72);
+.composer-quick-row button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(57, 169, 232, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
   color: #147fbd;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.composer-settings-wrap {
+  position: relative;
+  align-self: end;
+}
+
+.composer-settings-button {
+  align-self: end;
+  width: 44px;
+  height: 48px;
+  color: #ffffff;
+}
+
+.composer-settings-menu {
+  position: absolute;
+  left: 0;
+  bottom: 58px;
+  z-index: 20;
+  display: grid;
+  gap: 8px;
+  min-width: 138px;
+  padding: 9px;
+  border: 1px solid rgba(57, 169, 232, 0.25);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 34px rgba(35, 114, 166, 0.16);
+  backdrop-filter: blur(16px);
+}
+
+.composer-settings-menu button {
+  justify-content: flex-start;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(57, 169, 232, 0.18);
+  border-radius: 8px;
+  background: rgba(237, 248, 255, 0.78);
+  color: #123044;
   font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
@@ -1076,13 +1119,23 @@ textarea {
   }
 
   .xc-composer {
-    grid-template-columns: 42px 50px 1fr 44px;
+    grid-template-columns: 42px 1fr 44px;
     padding: 10px 12px 12px;
   }
 
-  .composer-context-button {
-    min-width: 50px;
-    padding: 0 6px;
+  .composer-quick-row {
+    padding-left: 0;
+    overflow-x: auto;
+  }
+
+  .composer-quick-row button {
+    min-height: 30px;
+    padding: 0 10px;
     font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .composer-settings-menu {
+    bottom: 54px;
   }
 }
