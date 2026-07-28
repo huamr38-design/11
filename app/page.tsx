@@ -238,6 +238,10 @@ function isFlatStatusMap(value: unknown): value is FlatStatusMap {
   return Boolean(value && typeof value === "object" && !Array.isArray(value) && Object.values(value as Record<string, unknown>).every((entry) => typeof entry === "string" || typeof entry === "number"));
 }
 
+function isGroupedStatusMap(value: unknown): value is Record<string, FlatStatusMap> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && Object.values(value as Record<string, unknown>).length > 0 && Object.values(value as Record<string, unknown>).every((entry) => isFlatStatusMap(entry)));
+}
+
 export default function Home() {
   const [characters, setCharacters] = useState<CharacterCard[]>(starterCharacters);
   const [activeCharacterId, setActiveCharacterId] = useState(starterCharacters[0].id);
@@ -397,7 +401,8 @@ export default function Home() {
   );
   const activeBackgroundImage = activeCharacter.avatarUrl || background.imageUrl;
   const messages = messagesByCharacter[activeCharacter.id] || [];
-  const visibleStatus = { ...defaultStatus, ...(statusByCharacter[activeCharacter.id] || {}) };
+  const activeHasStatusGroups = Boolean(activeCharacter.statusNames?.length);
+  const visibleStatus = activeHasStatusGroups ? (statusByCharacter[activeCharacter.id] || {}) : { ...defaultStatus, ...(statusByCharacter[activeCharacter.id] || {}) };
   const memory = memoryByCharacter[activeCharacter.id] || "";
   const contextMessageLimit = contextLimitByCharacter[activeCharacter.id] || 8;
   const busy = busyCharacterId === activeCharacter.id;
@@ -650,7 +655,12 @@ export default function Home() {
       const statusUpdate = data.statusUpdate && Object.keys(data.statusUpdate).length ? data.statusUpdate : null;
       if (!statusUpdate) throw new Error("status update empty");
 
-      const nextStatus = { ...args.previousStatus, ...statusUpdate };
+      const nextStatus = isGroupedStatusMap(statusUpdate)
+        ? Object.fromEntries(Object.entries(statusUpdate).map(([name, groupStatus]) => {
+            const previousGroup = isFlatStatusMap(args.previousStatus[name]) ? args.previousStatus[name] as FlatStatusMap : {};
+            return [name, { ...previousGroup, ...groupStatus }];
+          }))
+        : { ...args.previousStatus, ...statusUpdate };
       setStatusForCharacter(args.characterId, nextStatus);
       updateMessageForCharacter(args.characterId, args.assistantMessageId, (message) => ({
         ...message,
