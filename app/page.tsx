@@ -142,6 +142,22 @@ const defaultMaintenance: MaintenanceSettings = {
   message: "网站维护中，请稍后再来。"
 };
 
+const APP_DATA_VERSION = "2026-07-30.2";
+const APP_STORAGE_KEYS = [
+  "characters",
+  "fixedCharacter",
+  "activeCharacterId",
+  "fixedDirector",
+  "statusAgent",
+  "messagesByCharacter",
+  "statusByCharacter",
+  "memoryByCharacter",
+  "contextLimitByCharacter",
+  "memoryLimit",
+  "userPersona",
+  "chatBackground"
+];
+
 function uid(prefix = "id") {
   return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now()}`;
 }
@@ -153,6 +169,34 @@ function safeJsonParse<T>(value: string | null, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function safeLocalGet(key: string) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeLocalSet(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Storage can fail in private mode or when old image data fills quota.
+  }
+}
+
+function safeLocalRemove(key: string) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+function safeLocalJson<T>(key: string, fallback: T): T {
+  return safeJsonParse<T>(safeLocalGet(key), fallback);
 }
 
 function fileToDataUrl(file: File) {
@@ -324,6 +368,28 @@ function normalizeNumberRecord(value: unknown) {
   }));
 }
 
+function migrateLocalAppData() {
+  const version = safeLocalGet("appDataVersion");
+  if (version === APP_DATA_VERSION) return;
+
+  try {
+    const savedCharacters = safeLocalJson<CharacterCard[] | null>("characters", null);
+    const oldSingleCharacter = safeLocalJson<CharacterCard | null>("fixedCharacter", null);
+    const nextCharacters = (savedCharacters?.length ? savedCharacters : migrateOneCharacter(oldSingleCharacter)).map(normalizeCharacter);
+    safeLocalSet("characters", JSON.stringify(nextCharacters.length ? nextCharacters : starterCharacters));
+    safeLocalRemove("fixedCharacter");
+    safeLocalSet("messagesByCharacter", JSON.stringify(normalizeMessagesByCharacter(safeLocalJson("messagesByCharacter", {}))));
+    safeLocalSet("statusByCharacter", JSON.stringify(normalizeStatusByCharacter(safeLocalJson("statusByCharacter", {}))));
+    safeLocalSet("memoryByCharacter", JSON.stringify(normalizeStringRecord(safeLocalJson("memoryByCharacter", {}))));
+    safeLocalSet("contextLimitByCharacter", JSON.stringify(normalizeNumberRecord(safeLocalJson("contextLimitByCharacter", {}))));
+    safeLocalSet("memoryLimit", String(Math.max(1000, Math.min(50000, Number(safeLocalGet("memoryLimit") || 7000)))));
+    safeLocalSet("appDataVersion", APP_DATA_VERSION);
+  } catch {
+    for (const key of APP_STORAGE_KEYS) safeLocalRemove(key);
+    safeLocalSet("appDataVersion", APP_DATA_VERSION);
+  }
+}
+
 export default function Home() {
   const [characters, setCharacters] = useState<CharacterCard[]>(starterCharacters);
   const [activeCharacterId, setActiveCharacterId] = useState(starterCharacters[0].id);
@@ -361,27 +427,28 @@ export default function Home() {
   const [accountReady, setAccountReady] = useState(false);
 
   useEffect(() => {
-    const savedCharacters = safeJsonParse<CharacterCard[] | null>(localStorage.getItem("characters"), null);
-    const oldSingleCharacter = safeJsonParse<CharacterCard | null>(localStorage.getItem("fixedCharacter"), null);
+    migrateLocalAppData();
+    const savedCharacters = safeLocalJson<CharacterCard[] | null>("characters", null);
+    const oldSingleCharacter = safeLocalJson<CharacterCard | null>("fixedCharacter", null);
     const nextCharacters = (savedCharacters?.length ? savedCharacters : migrateOneCharacter(oldSingleCharacter)).map(normalizeCharacter);
     setCharacters(nextCharacters);
-    setActiveCharacterId(localStorage.getItem("activeCharacterId") || nextCharacters[0].id);
-    setDirector(safeJsonParse(localStorage.getItem("fixedDirector"), fixedDirector));
-    setStatusAgent(safeJsonParse(localStorage.getItem("statusAgent"), fixedStatusAgent));
-    setMessagesByCharacter(normalizeMessagesByCharacter(safeJsonParse(localStorage.getItem("messagesByCharacter"), {})));
-    setStatusByCharacter(normalizeStatusByCharacter(safeJsonParse(localStorage.getItem("statusByCharacter"), {})));
-    setMemoryByCharacter(normalizeStringRecord(safeJsonParse(localStorage.getItem("memoryByCharacter"), {})));
-    setContextLimitByCharacter(normalizeNumberRecord(safeJsonParse(localStorage.getItem("contextLimitByCharacter"), {})));
-    setMemoryLimit(Number(localStorage.getItem("memoryLimit") || "7000"));
-    setUserPersona(localStorage.getItem("userPersona") || "");
-    const savedUser = localStorage.getItem("currentUser") || "";
-    const savedToken = localStorage.getItem("currentToken") || "";
+    setActiveCharacterId(safeLocalGet("activeCharacterId") || nextCharacters[0].id);
+    setDirector(safeLocalJson("fixedDirector", fixedDirector));
+    setStatusAgent(safeLocalJson("statusAgent", fixedStatusAgent));
+    setMessagesByCharacter(normalizeMessagesByCharacter(safeLocalJson("messagesByCharacter", {})));
+    setStatusByCharacter(normalizeStatusByCharacter(safeLocalJson("statusByCharacter", {})));
+    setMemoryByCharacter(normalizeStringRecord(safeLocalJson("memoryByCharacter", {})));
+    setContextLimitByCharacter(normalizeNumberRecord(safeLocalJson("contextLimitByCharacter", {})));
+    setMemoryLimit(Number(safeLocalGet("memoryLimit") || "7000"));
+    setUserPersona(safeLocalGet("userPersona") || "");
+    const savedUser = safeLocalGet("currentUser") || "";
+    const savedToken = safeLocalGet("currentToken") || "";
     setCurrentUser(savedUser);
     setCurrentToken(savedToken);
     setLoginName(savedUser);
-    setBackground(safeJsonParse(localStorage.getItem("chatBackground"), defaultBackground));
-    const adminUnlocked = localStorage.getItem("adminUnlocked") === "yes";
-    const savedAdminToken = localStorage.getItem("adminToken") || "";
+    setBackground(safeLocalJson("chatBackground", defaultBackground));
+    const adminUnlocked = safeLocalGet("adminUnlocked") === "yes";
+    const savedAdminToken = safeLocalGet("adminToken") || "";
     setIsAdmin(adminUnlocked);
     setAdminToken(savedAdminToken);
     void fetch("/api/maintenance")
@@ -405,7 +472,7 @@ export default function Home() {
           return;
         }
         setCharacters(serverCharacters);
-        const savedActiveId = localStorage.getItem("activeCharacterId");
+        const savedActiveId = safeLocalGet("activeCharacterId");
         const hasSavedActive = serverCharacters.some((item: CharacterCard) => item.id === savedActiveId);
         setActiveCharacterId(hasSavedActive ? String(savedActiveId) : serverCharacters[0].id);
       })
@@ -417,7 +484,7 @@ export default function Home() {
           setDirector(data.agent);
           return;
         }
-        if (adminUnlocked && savedAdminToken) saveAgentToServer(safeJsonParse(localStorage.getItem("fixedDirector"), fixedDirector), savedAdminToken);
+        if (adminUnlocked && savedAdminToken) saveAgentToServer(safeLocalJson("fixedDirector", fixedDirector), savedAdminToken);
       })
       .catch(() => undefined);
     void fetch("/api/status-agent")
@@ -427,30 +494,30 @@ export default function Home() {
           setStatusAgent(data.agent);
           return;
         }
-        if (adminUnlocked && savedAdminToken) saveStatusAgentToServer(safeJsonParse(localStorage.getItem("statusAgent"), fixedStatusAgent), savedAdminToken);
+        if (adminUnlocked && savedAdminToken) saveStatusAgentToServer(safeLocalJson("statusAgent", fixedStatusAgent), savedAdminToken);
       })
       .catch(() => undefined);
   }, []);
 
-  useEffect(() => localStorage.setItem("characters", JSON.stringify(characters)), [characters]);
-  useEffect(() => localStorage.setItem("activeCharacterId", activeCharacterId), [activeCharacterId]);
-  useEffect(() => localStorage.setItem("fixedDirector", JSON.stringify(director)), [director]);
-  useEffect(() => localStorage.setItem("statusAgent", JSON.stringify(statusAgent)), [statusAgent]);
-  useEffect(() => localStorage.setItem("messagesByCharacter", JSON.stringify(messagesByCharacter)), [messagesByCharacter]);
-  useEffect(() => localStorage.setItem("statusByCharacter", JSON.stringify(statusByCharacter)), [statusByCharacter]);
-  useEffect(() => localStorage.setItem("memoryByCharacter", JSON.stringify(memoryByCharacter)), [memoryByCharacter]);
-  useEffect(() => localStorage.setItem("contextLimitByCharacter", JSON.stringify(contextLimitByCharacter)), [contextLimitByCharacter]);
-  useEffect(() => localStorage.setItem("memoryLimit", String(memoryLimit)), [memoryLimit]);
-  useEffect(() => localStorage.setItem("userPersona", userPersona), [userPersona]);
-  useEffect(() => localStorage.setItem("chatBackground", JSON.stringify(background)), [background]);
+  useEffect(() => safeLocalSet("characters", JSON.stringify(characters.map(normalizeCharacter))), [characters]);
+  useEffect(() => safeLocalSet("activeCharacterId", activeCharacterId), [activeCharacterId]);
+  useEffect(() => safeLocalSet("fixedDirector", JSON.stringify(director)), [director]);
+  useEffect(() => safeLocalSet("statusAgent", JSON.stringify(statusAgent)), [statusAgent]);
+  useEffect(() => safeLocalSet("messagesByCharacter", JSON.stringify(normalizeMessagesByCharacter(messagesByCharacter))), [messagesByCharacter]);
+  useEffect(() => safeLocalSet("statusByCharacter", JSON.stringify(normalizeStatusByCharacter(statusByCharacter))), [statusByCharacter]);
+  useEffect(() => safeLocalSet("memoryByCharacter", JSON.stringify(normalizeStringRecord(memoryByCharacter))), [memoryByCharacter]);
+  useEffect(() => safeLocalSet("contextLimitByCharacter", JSON.stringify(normalizeNumberRecord(contextLimitByCharacter))), [contextLimitByCharacter]);
+  useEffect(() => safeLocalSet("memoryLimit", String(memoryLimit)), [memoryLimit]);
+  useEffect(() => safeLocalSet("userPersona", userPersona), [userPersona]);
+  useEffect(() => safeLocalSet("chatBackground", JSON.stringify(background)), [background]);
 
   useEffect(() => {
     if (!currentUser || !currentToken) {
       setAccountReady(false);
       return;
     }
-    localStorage.setItem("currentUser", currentUser);
-    localStorage.setItem("currentToken", currentToken);
+    safeLocalSet("currentUser", currentUser);
+    safeLocalSet("currentToken", currentToken);
     setAccountReady(false);
     void fetch("/api/user-state", { headers: { Authorization: `Bearer ${currentToken}` } })
       .then((response) => (response.ok ? response.json() : null))
@@ -632,9 +699,9 @@ export default function Home() {
       return;
     }
     setIsAdmin(true);
-    localStorage.setItem("adminUnlocked", "yes");
+    safeLocalSet("adminUnlocked", "yes");
     setAdminToken(adminCode);
-    localStorage.setItem("adminToken", adminCode);
+    safeLocalSet("adminToken", adminCode);
     if (characters.length) saveCharactersToServer(characters, adminCode);
     saveAgentToServer(director, adminCode);
     saveStatusAgentToServer(statusAgent, adminCode);
@@ -645,8 +712,8 @@ export default function Home() {
   function logoutAdmin() {
     setIsAdmin(false);
     setAdminToken("");
-    localStorage.removeItem("adminUnlocked");
-    localStorage.removeItem("adminToken");
+    safeLocalRemove("adminUnlocked");
+    safeLocalRemove("adminToken");
   }
 
   async function updateMaintenance(next: MaintenanceSettings) {
@@ -702,8 +769,8 @@ export default function Home() {
     setMemoryByCharacter({});
     setContextLimitByCharacter({});
     setUserPersona("");
-    localStorage.removeItem("currentUser");
-    localStorage.removeItem("currentToken");
+    safeLocalRemove("currentUser");
+    safeLocalRemove("currentToken");
   }
 
   async function updateStatusAfterReply(args: {
