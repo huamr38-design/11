@@ -274,6 +274,56 @@ function isGroupedStatusMap(value: unknown): value is Record<string, FlatStatusM
   return Boolean(value && typeof value === "object" && !Array.isArray(value) && Object.values(value as Record<string, unknown>).length > 0 && Object.values(value as Record<string, unknown>).every((entry) => isFlatStatusMap(entry)));
 }
 
+function safeObjectRecord<T>(value: unknown): Record<string, T> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, T> : {};
+}
+
+function normalizeMessage(message: unknown): ChatMessage | null {
+  if (!message || typeof message !== "object") return null;
+  const raw = message as Partial<ChatMessage>;
+  if (raw.role !== "user" && raw.role !== "assistant") return null;
+  return {
+    id: String(raw.id || uid("message")),
+    role: raw.role,
+    content: String(raw.content || ""),
+    createdAt: Number(raw.createdAt || Date.now()),
+    statusSnapshot: raw.statusSnapshot && typeof raw.statusSnapshot === "object" ? raw.statusSnapshot : undefined,
+    statusPreviousSnapshot: raw.statusPreviousSnapshot && typeof raw.statusPreviousSnapshot === "object" ? raw.statusPreviousSnapshot : undefined,
+    statusPending: Boolean(raw.statusPending),
+    statusError: Boolean(raw.statusError)
+  };
+}
+
+function normalizeMessagesByCharacter(value: unknown) {
+  const raw = safeObjectRecord<unknown>(value);
+  return Object.fromEntries(Object.entries(raw).map(([key, entry]) => [
+    key,
+    Array.isArray(entry) ? entry.map(normalizeMessage).filter(Boolean) as ChatMessage[] : []
+  ]));
+}
+
+function normalizeStatusMap(value: unknown): StatusMap {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as StatusMap : {};
+}
+
+function normalizeStatusByCharacter(value: unknown) {
+  const raw = safeObjectRecord<unknown>(value);
+  return Object.fromEntries(Object.entries(raw).map(([key, entry]) => [key, normalizeStatusMap(entry)]));
+}
+
+function normalizeStringRecord(value: unknown) {
+  const raw = safeObjectRecord<unknown>(value);
+  return Object.fromEntries(Object.entries(raw).map(([key, entry]) => [key, String(entry || "")]));
+}
+
+function normalizeNumberRecord(value: unknown) {
+  const raw = safeObjectRecord<unknown>(value);
+  return Object.fromEntries(Object.entries(raw).map(([key, entry]) => {
+    const next = Number(entry);
+    return [key, Number.isFinite(next) ? next : 8];
+  }));
+}
+
 export default function Home() {
   const [characters, setCharacters] = useState<CharacterCard[]>(starterCharacters);
   const [activeCharacterId, setActiveCharacterId] = useState(starterCharacters[0].id);
@@ -318,10 +368,10 @@ export default function Home() {
     setActiveCharacterId(localStorage.getItem("activeCharacterId") || nextCharacters[0].id);
     setDirector(safeJsonParse(localStorage.getItem("fixedDirector"), fixedDirector));
     setStatusAgent(safeJsonParse(localStorage.getItem("statusAgent"), fixedStatusAgent));
-    setMessagesByCharacter(safeJsonParse(localStorage.getItem("messagesByCharacter"), {}));
-    setStatusByCharacter(safeJsonParse(localStorage.getItem("statusByCharacter"), {}));
-    setMemoryByCharacter(safeJsonParse(localStorage.getItem("memoryByCharacter"), {}));
-    setContextLimitByCharacter(safeJsonParse(localStorage.getItem("contextLimitByCharacter"), {}));
+    setMessagesByCharacter(normalizeMessagesByCharacter(safeJsonParse(localStorage.getItem("messagesByCharacter"), {})));
+    setStatusByCharacter(normalizeStatusByCharacter(safeJsonParse(localStorage.getItem("statusByCharacter"), {})));
+    setMemoryByCharacter(normalizeStringRecord(safeJsonParse(localStorage.getItem("memoryByCharacter"), {})));
+    setContextLimitByCharacter(normalizeNumberRecord(safeJsonParse(localStorage.getItem("contextLimitByCharacter"), {})));
     setMemoryLimit(Number(localStorage.getItem("memoryLimit") || "7000"));
     setUserPersona(localStorage.getItem("userPersona") || "");
     const savedUser = localStorage.getItem("currentUser") || "";
@@ -407,10 +457,10 @@ export default function Home() {
       .then((data) => {
         const state = data?.state;
         if (state) {
-          setMessagesByCharacter(state.messagesByCharacter || {});
-          setStatusByCharacter(state.statusByCharacter || {});
-          setMemoryByCharacter(state.memoryByCharacter || {});
-          setContextLimitByCharacter(state.contextLimitByCharacter || {});
+          setMessagesByCharacter(normalizeMessagesByCharacter(state.messagesByCharacter));
+          setStatusByCharacter(normalizeStatusByCharacter(state.statusByCharacter));
+          setMemoryByCharacter(normalizeStringRecord(state.memoryByCharacter));
+          setContextLimitByCharacter(normalizeNumberRecord(state.contextLimitByCharacter));
           setUserPersona(state.userPersona || "");
           setMemoryLimit(Number(state.memoryLimit || 7000));
         }
@@ -428,11 +478,11 @@ export default function Home() {
   }, [currentUser, currentToken, accountReady, messagesByCharacter, statusByCharacter, memoryByCharacter, contextLimitByCharacter, userPersona, memoryLimit]);
 
   const activeCharacter = useMemo(
-    () => characters.find((item) => item.id === activeCharacterId) || characters[0],
+    () => normalizeCharacter(characters.find((item) => item.id === activeCharacterId) || characters[0] || starterCharacters[0]),
     [characters, activeCharacterId]
   );
   const activeBackgroundImage = activeCharacter.avatarUrl || background.imageUrl;
-  const messages = messagesByCharacter[activeCharacter.id] || [];
+  const messages = Array.isArray(messagesByCharacter[activeCharacter.id]) ? messagesByCharacter[activeCharacter.id] : [];
   const activeHasStatusGroups = Boolean(activeCharacter.statusNames?.length);
   const visibleStatus = activeHasStatusGroups ? (statusByCharacter[activeCharacter.id] || {}) : { ...defaultStatus, ...(statusByCharacter[activeCharacter.id] || {}) };
   const memory = memoryByCharacter[activeCharacter.id] || "";
