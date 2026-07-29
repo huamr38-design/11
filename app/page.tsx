@@ -258,6 +258,14 @@ function statusContextMessages(messages: ChatMessage[]) {
   }));
 }
 
+function normalizeCharacter(character: CharacterCard): CharacterCard {
+  return {
+    ...character,
+    tags: cleanTags(character.tags),
+    statusNames: cleanStatusNames(character.statusNames || [])
+  };
+}
+
 function isFlatStatusMap(value: unknown): value is FlatStatusMap {
   return Boolean(value && typeof value === "object" && !Array.isArray(value) && Object.values(value as Record<string, unknown>).every((entry) => typeof entry === "string" || typeof entry === "number"));
 }
@@ -305,7 +313,7 @@ export default function Home() {
   useEffect(() => {
     const savedCharacters = safeJsonParse<CharacterCard[] | null>(localStorage.getItem("characters"), null);
     const oldSingleCharacter = safeJsonParse<CharacterCard | null>(localStorage.getItem("fixedCharacter"), null);
-    const nextCharacters = savedCharacters?.length ? savedCharacters : migrateOneCharacter(oldSingleCharacter);
+    const nextCharacters = (savedCharacters?.length ? savedCharacters : migrateOneCharacter(oldSingleCharacter)).map(normalizeCharacter);
     setCharacters(nextCharacters);
     setActiveCharacterId(localStorage.getItem("activeCharacterId") || nextCharacters[0].id);
     setDirector(safeJsonParse(localStorage.getItem("fixedDirector"), fixedDirector));
@@ -339,7 +347,7 @@ export default function Home() {
           if (adminUnlocked && savedAdminToken) saveCharactersToServer(nextCharacters, savedAdminToken);
           return;
         }
-        const serverCharacters = data.characters as CharacterCard[];
+        const serverCharacters = (data.characters as CharacterCard[]).map(normalizeCharacter);
         const serverLooksDefault = serverCharacters.length === 1 && serverCharacters[0].id === starterCharacters[0].id;
         const localLooksCustom = JSON.stringify(nextCharacters) !== JSON.stringify(starterCharacters);
         if (adminUnlocked && serverLooksDefault && localLooksCustom) {
@@ -915,7 +923,7 @@ export default function Home() {
               <div className="xc-avatar">{character.avatarUrl ? <img src={character.avatarUrl} alt="" /> : character.name[0]}</div>
               <div>
                 <strong>{character.name}</strong>
-                <span className="xc-tag-row">{character.tags.map((tag) => <b className="xc-tag-pill" key={tag}>{tag}</b>)}</span>
+                <span className="xc-tag-row">{cleanTags(character.tags).map((tag) => <b className="xc-tag-pill" key={tag}>{tag}</b>)}</span>
               </div>
             </button>
           ))}
@@ -1355,7 +1363,7 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
       setValue({
         ...value,
         name: value.name || fileName,
-        tags: value.tags.length ? value.tags : ["成年人"],
+        tags: cleanTags(value.tags).length ? cleanTags(value.tags) : ["成年人"],
         statusPrompt: value.statusPrompt || "",
         statusNames: value.statusNames || [],
         creatorNotes: text,
@@ -1372,7 +1380,7 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
     <div className="modal-stack">
       <label className="upload-button"><BookOpen size={16} />上传 .txt 角色卡<input type="file" accept=".txt,text/plain,application/json" onChange={importCharacterText} /></label>
       <label>角色名<input value={value.name} onChange={(event) => setValue({ ...value, name: event.target.value })} /></label>
-      <label>{"\u89d2\u8272\u6807\u7b7e"}<textarea value={(value.tags || []).join("\n")} onChange={(event) => setValue({ ...value, tags: cleanTags(event.target.value) })} placeholder={"\u6bcf\u884c\u4e00\u4e2a\uff0c\u6216\u7528\u9017\u53f7\u5206\u9694\u3002\u4f8b\u5982\uff1a\u51b7\u6de1\u3001\u6162\u70ed\u3001\u591a\u89d2\u8272"} /></label>
+      <label>{"\u89d2\u8272\u6807\u7b7e"}<textarea value={cleanTags(value.tags).join("\n")} onChange={(event) => setValue({ ...value, tags: cleanTags(event.target.value) })} placeholder={"\u6bcf\u884c\u4e00\u4e2a\uff0c\u6216\u7528\u9017\u53f7\u5206\u9694\u3002\u4f8b\u5982\uff1a\u51b7\u6de1\u3001\u6162\u70ed\u3001\u591a\u89d2\u8272"} /></label>
       <label>头像 URL<input value={value.avatarUrl || ""} onChange={(event) => setValue({ ...value, avatarUrl: event.target.value })} /></label>
       <label className="upload-button"><BookOpen size={16} />{"\u4e0a\u4f20 .txt \u89d2\u8272\u5361\u72b6\u6001\u680f\u89c4\u5219"}<input type="file" accept=".txt,text/plain" onChange={uploadStatusPrompt} /></label>
       <label>{"\u72b6\u6001\u680f\u667a\u80fd\u4f53"}<textarea value={value.statusPrompt || ""} onChange={(event) => setValue({ ...value, statusPrompt: event.target.value })} placeholder={"\u8fd9\u5f20\u89d2\u8272\u5361\u4e13\u5c5e\u7684\u72b6\u6001\u680f\u8865\u5145\u89c4\u5219\u3002\u4f1a\u548c\u5916\u90e8\u901a\u7528\u72b6\u6001\u680f\u667a\u80fd\u4f53\u4e00\u8d77\u53d1\u7ed9 API\u3002"} /></label>
