@@ -297,6 +297,25 @@ textarea {
   font-size: 13px;
 }
 
+.xc-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.xc-tag-pill {
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.18);
+  color: #c7ecff;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+  padding: 4px 8px;
+}
+
 .xc-card {
   width: 100%;
   min-height: 68px;
@@ -633,9 +652,29 @@ textarea {
   line-height: 1.35;
 }
 
+.status-pill-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.status-value-pill {
+  max-width: 100%;
+  border: 1px solid rgba(129, 212, 250, 0.22);
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.2);
+  color: #ecfaff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 4px 9px;
+  overflow-wrap: anywhere;
+}
+
 .status-meter {
   display: grid;
-  grid-template-columns: minmax(74px, 1fr) 38px;
+  grid-template-columns: minmax(74px, 1fr) 38px 14px;
   align-items: center;
   gap: 8px;
 }
@@ -661,6 +700,21 @@ textarea {
   color: #ffffff;
   font-size: 12px;
   text-align: right;
+}
+
+.status-trend {
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.status-trend.up {
+  color: #34d399;
+}
+
+.status-trend.down {
+  color: #fb7185;
 }
 
 .xc-composer {

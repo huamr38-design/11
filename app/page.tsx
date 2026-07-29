@@ -52,6 +52,7 @@ type ChatMessage = {
   content: string;
   createdAt: number;
   statusSnapshot?: StatusMap;
+  statusPreviousSnapshot?: StatusMap;
   statusPending?: boolean;
   statusError?: boolean;
 };
@@ -212,7 +213,7 @@ function saveUserStateToServer(user: string, state: {
 
 function compactCharacterForChat(character: CharacterCard) {
   const { avatarUrl, ...textOnlyCharacter } = character;
-  return textOnlyCharacter;
+  return { ...textOnlyCharacter, statusNames: effectiveStatusNames(character) };
 }
 
 function compactDirectorForChat(agent: BackendAgent) {
@@ -228,10 +229,33 @@ function compactDirectorForChat(agent: BackendAgent) {
 function cleanStatusNames(value: unknown) {
   const source = Array.isArray(value) ? value.join("\n") : String(value || "");
   return source
-    .split(/[\n,，、;；|]/)
-    .map((item) => item.trim())
+    .split(/[\n,+&/|;:，、；：]/)
+    .map((item) => item.trim().replace(/^\s*(?:\d+|[一二三四五六七八九十]+)[\.、\)\）:\uff1a-]\s*/, ""))
     .filter(Boolean)
     .slice(0, 12);
+}
+
+function effectiveStatusNames(character: CharacterCard) {
+  const explicitNames = cleanStatusNames(character.statusNames || []);
+  if (explicitNames.length) return explicitNames;
+  const inferredNames = cleanStatusNames(character.name);
+  return inferredNames.length > 1 ? inferredNames : [];
+}
+
+function cleanTags(value: unknown) {
+  const source = Array.isArray(value) ? value.join("\n") : String(value || "");
+  return source
+    .split(/[\n,+&/|;:，、；：]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
+function statusContextMessages(messages: ChatMessage[]) {
+  return messages.slice(-8).map((message) => ({
+    role: message.role,
+    content: message.content.slice(0, 700)
+  }));
 }
 
 function isFlatStatusMap(value: unknown): value is FlatStatusMap {
@@ -633,6 +657,7 @@ export default function Home() {
     assistantReply: string;
     previousStatus: StatusMap;
     memory: string;
+    recentMessages: ChatMessage[];
   }) {
     try {
       const response = await fetch("/api/status", {
@@ -645,8 +670,9 @@ export default function Home() {
           assistantReply: args.assistantReply,
           previousStatus: args.previousStatus,
           memory: args.memory,
+          messages: statusContextMessages(args.recentMessages),
           backendAgent: compactDirectorForChat(director),
-          statusAgent: compactDirectorForChat(args.character.statusPrompt?.trim() ? { ...statusAgent, systemPrompt: args.character.statusPrompt } : statusAgent)
+          statusAgent: compactDirectorForChat(statusAgent)
         })
       });
       const data = await response.json().catch(() => null);
@@ -665,6 +691,7 @@ export default function Home() {
       updateMessageForCharacter(args.characterId, args.assistantMessageId, (message) => ({
         ...message,
         statusSnapshot: nextStatus,
+        statusPreviousSnapshot: args.previousStatus,
         statusPending: false,
         statusError: false
       }));
@@ -749,7 +776,8 @@ export default function Home() {
         userMessage: text,
         assistantReply: assistantMessage.content,
         previousStatus: requestStatus,
-        memory: requestMemory
+        memory: requestMemory,
+        recentMessages: [...requestMessages, userMessage, assistantMessage]
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "\u53d1\u9001\u5931\u8d25");
@@ -887,7 +915,7 @@ export default function Home() {
               <div className="xc-avatar">{character.avatarUrl ? <img src={character.avatarUrl} alt="" /> : character.name[0]}</div>
               <div>
                 <strong>{character.name}</strong>
-                <span>{character.tags.join(" · ")}</span>
+                <span className="xc-tag-row">{character.tags.map((tag) => <b className="xc-tag-pill" key={tag}>{tag}</b>)}</span>
               </div>
             </button>
           ))}
@@ -947,7 +975,7 @@ export default function Home() {
                   ) : message.statusError ? (
                     <RoleStatusNotice text="状态栏更新失败，聊天内容已保存。" />
                   ) : (
-                    <RoleStatusCardV2 characterName={activeCharacter.name} status={message.statusSnapshot || visibleStatus} />
+                    <RoleStatusCardV2 characterName={activeCharacter.name} status={message.statusSnapshot || visibleStatus} previousStatus={message.statusPreviousSnapshot} />
                   )
                 )}
               </div>
@@ -1295,6 +1323,13 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
     event.target.value = "";
   }
 
+  async function uploadStatusPrompt(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setValue({ ...value, statusPrompt: await file.text() });
+    event.target.value = "";
+  }
+
   async function importCharacterText(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -1306,7 +1341,7 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
       setValue({
         ...value,
         name: String(parsed.name || parsed.title || value.name || fileName),
-        tags: Array.isArray(parsed.tags) ? parsed.tags.map(String) : value.tags,
+        tags: cleanTags(parsed.tags || parsed["\u6807\u7b7e"] || value.tags),
         avatarUrl: String(parsed.avatarUrl || parsed.avatar || value.avatarUrl || ""),
         statusPrompt: String(parsed.statusPrompt || parsed.status_prompt || parsed.statusAgent || parsed.status_agent || parsed.status || value.statusPrompt || ""),
         statusNames: cleanStatusNames(parsed.statusNames || parsed.status_names || parsed.statusCharacters || parsed.status_characters || parsed["\u72b6\u6001\u680f\u89d2\u8272\u540d\u5355"] || value.statusNames || []),
@@ -1337,8 +1372,10 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
     <div className="modal-stack">
       <label className="upload-button"><BookOpen size={16} />上传 .txt 角色卡<input type="file" accept=".txt,text/plain,application/json" onChange={importCharacterText} /></label>
       <label>角色名<input value={value.name} onChange={(event) => setValue({ ...value, name: event.target.value })} /></label>
+      <label>{"\u89d2\u8272\u6807\u7b7e"}<textarea value={(value.tags || []).join("\n")} onChange={(event) => setValue({ ...value, tags: cleanTags(event.target.value) })} placeholder={"\u6bcf\u884c\u4e00\u4e2a\uff0c\u6216\u7528\u9017\u53f7\u5206\u9694\u3002\u4f8b\u5982\uff1a\u51b7\u6de1\u3001\u6162\u70ed\u3001\u591a\u89d2\u8272"} /></label>
       <label>头像 URL<input value={value.avatarUrl || ""} onChange={(event) => setValue({ ...value, avatarUrl: event.target.value })} /></label>
-      <label>{"\u72b6\u6001\u680f\u667a\u80fd\u4f53"}<textarea value={value.statusPrompt || ""} onChange={(event) => setValue({ ...value, statusPrompt: event.target.value })} placeholder={"\u8fd9\u5f20\u89d2\u8272\u5361\u4e13\u5c5e\u7684\u72b6\u6001\u680f\u89c4\u5219\u3002\u5982\u679c\u8fd9\u91cc\u586b\u4e86\uff0c\u5c31\u4e0d\u4f7f\u7528\u9ed8\u8ba4\u72b6\u6001\u680f\u667a\u80fd\u4f53\u3002"} /></label>
+      <label className="upload-button"><BookOpen size={16} />{"\u4e0a\u4f20 .txt \u89d2\u8272\u5361\u72b6\u6001\u680f\u89c4\u5219"}<input type="file" accept=".txt,text/plain" onChange={uploadStatusPrompt} /></label>
+      <label>{"\u72b6\u6001\u680f\u667a\u80fd\u4f53"}<textarea value={value.statusPrompt || ""} onChange={(event) => setValue({ ...value, statusPrompt: event.target.value })} placeholder={"\u8fd9\u5f20\u89d2\u8272\u5361\u4e13\u5c5e\u7684\u72b6\u6001\u680f\u8865\u5145\u89c4\u5219\u3002\u4f1a\u548c\u5916\u90e8\u901a\u7528\u72b6\u6001\u680f\u667a\u80fd\u4f53\u4e00\u8d77\u53d1\u7ed9 API\u3002"} /></label>
       <label>{"\u72b6\u6001\u680f\u89d2\u8272\u540d\u5355"}<textarea value={(value.statusNames || []).join("\n")} onChange={(event) => setValue({ ...value, statusNames: cleanStatusNames(event.target.value) })} placeholder={"\u6bcf\u884c\u4e00\u4e2a\u89d2\u8272\u540d\u3002\u586b\u4e86\u4ee5\u540e\uff0c\u72b6\u6001\u680f\u4f1a\u6309\u8fd9\u4e9b\u540d\u5b57\u5206\u522b\u751f\u6210\u3002"} /></label>
       <label>角色简介<textarea value={value.profile} onChange={(event) => setValue({ ...value, profile: event.target.value })} /></label>
       <label>角色卡内容<textarea value={value.creatorNotes} onChange={(event) => setValue({ ...value, creatorNotes: event.target.value })} placeholder="上传 .txt 后会自动填入这里。" /></label>
@@ -1385,7 +1422,7 @@ function RoleStatusNotice({ text }: { text: string }) {
   );
 }
 
-function RoleStatusCardV2({ characterName, status }: { characterName: string; status: StatusMap }) {
+function RoleStatusCardV2({ characterName, status, previousStatus }: { characterName: string; status: StatusMap; previousStatus?: StatusMap }) {
   const orderedKeys = ["\u5f53\u524d\u9636\u6bb5", "\u5fc3\u60c5", "\u4f4d\u7f6e", "\u52a8\u4f5c", "\u5bf9\u7528\u6237\u6001\u5ea6", "\u8bed\u6c14", "\u773c\u795e", "\u7a7f\u7740", "\u8eab\u4f53\u53cd\u5e94"];
   const groupedEntries = Object.entries(status).filter(([, value]) => isFlatStatusMap(value)) as Array<[string, FlatStatusMap]>;
   const hasGroups = groupedEntries.length > 0 && groupedEntries.length === Object.keys(status).length;
@@ -1411,11 +1448,14 @@ function RoleStatusCardV2({ characterName, status }: { characterName: string; st
             <div className="role-status-list">
               {rowsFor(groupStatus).map(({ key, value }) => {
                 const percent = parsePercent(value);
+                const previousGroup = hasGroups && previousStatus && isFlatStatusMap(previousStatus[groupName]) ? previousStatus[groupName] as FlatStatusMap : previousStatus && !hasGroups && isFlatStatusMap(previousStatus) ? previousStatus as FlatStatusMap : {};
+                const previousPercent = parsePercent(previousGroup[key]);
+                const trend = percent !== null && previousPercent !== null ? Math.sign(percent - previousPercent) : 0;
                 return (
                   <div className="role-status-row" key={`${groupName}-${key}`}>
                     <span className="status-label">{key}</span>
                     <span className="status-dot">-</span>
-                    {percent === null ? <strong className="status-text">{String(value)}</strong> : <div className="status-meter"><i style={{ width: `${percent}%` }} /><b>{percent}%</b></div>}
+                    {percent === null ? <StatusValuePills value={value} /> : <div className="status-meter"><i style={{ width: `${percent}%` }} /><b>{percent}%</b>{trend > 0 && <em className="status-trend up">↑</em>}{trend < 0 && <em className="status-trend down">↓</em>}</div>}
                   </div>
                 );
               })}
@@ -1467,6 +1507,20 @@ function RoleStatusCard({ characterName, status }: { characterName: string; stat
         })}
       </div>
     </div>
+  );
+}
+
+function StatusValuePills({ value }: { value: string | number }) {
+  const text = String(value || "").trim();
+  const parts = text
+    .split(/[，、,;；|/]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const tokens = parts.length > 1 && parts.every((item) => item.length <= 12) ? parts.slice(0, 8) : [text];
+  return (
+    <strong className="status-pill-wrap">
+      {tokens.map((token) => <span className="status-value-pill" key={token}>{token}</span>)}
+    </strong>
   );
 }
 

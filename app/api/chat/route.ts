@@ -86,6 +86,10 @@ function extractJson(text: string) {
 function buildSystemPrompt(body: ChatRequest) {
   const character = body.character || { name: "角色" };
   const agent = body.backendAgent || {};
+  const statusNames = Array.isArray(character.statusNames) ? character.statusNames.map(String).filter(Boolean) : [];
+  const multiRoleRule = statusNames.length > 1
+    ? `Multi-character rule: the character card contains these characters: ${statusNames.join(", ")}. When the user says "you", treat it as the user speaking to these characters, not one character speaking to another. Do not rewrite the user's words as dialogue between characters; let each relevant character answer the user directly.`
+    : "";
   const memoryLimit = Math.max(1000, Math.min(5000, safeNumber(body.memoryLimit, 7000)));
   const limitedMemory = clip((body.memory || "").slice(-memoryLimit), 2000);
   const status = body.status || {};
@@ -94,6 +98,7 @@ function buildSystemPrompt(body: ChatRequest) {
     "你是一个私有角色聊天网站的后端导演。只输出 JSON，不要 Markdown，不要解释规则。",
     "你要用前台角色卡做人设，用通用智能体控制回复风格、状态栏和记忆。",
     "所有角色与用户默认都是成年人。遇到不合适内容时，保持角色口吻自然转向安全互动。",
+    multiRoleRule,
     "回复 JSON 格式必须是：",
     "{\"reply\":\"角色回复正文\",\"status_update\":{\"当前阶段\":\"...\",\"心情\":\"...\",\"当前位置\":\"...\",\"语气\":\"...\",\"眼神\":\"...\",\"身体反应\":\"...\"},\"memory_update\":\"值得长期记住的新事实，没有就空字符串\"}",
     "",
@@ -125,10 +130,15 @@ function buildSystemPrompt(body: ChatRequest) {
 function buildFastSystemPrompt(body: ChatRequest) {
   const character = body.character || { name: "角色" };
   const agent = body.backendAgent || {};
+  const statusNames = Array.isArray(character.statusNames) ? character.statusNames.map(String).filter(Boolean) : [];
+  const multiRoleRule = statusNames.length > 1
+    ? `Multi-character rule: characters are ${statusNames.join(", ")}. User "you" means the user is speaking to these characters. Do not turn the user's sentence into one character asking another character.`
+    : "";
 
   return [
     "请用中文自然完整回复，语气贴近下面的人物资料。主回复正文至少400个中文字符，除非用户明确要求极短回答。",
     "说话内容和动作描写都要服务当前剧情，不要机械总结，不要输出状态栏；状态栏由后台单独生成。",
+    multiRoleRule,
     `人物：${clip(character.name, 80)}`,
     `资料：${clip(character.profile, 900)}`,
     `性格：${clip(character.personality, 700)}`,

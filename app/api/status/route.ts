@@ -9,6 +9,11 @@ type BackendAgent = {
   systemPrompt?: string;
 };
 
+type StatusMessage = {
+  role?: "user" | "assistant";
+  content?: string;
+};
+
 type StatusRequest = {
   character?: {
     name?: string;
@@ -23,10 +28,11 @@ type StatusRequest = {
   };
   backendAgent?: BackendAgent;
   statusAgent?: BackendAgent;
+  messages?: StatusMessage[];
   userPersona?: string;
   userMessage?: string;
   assistantReply?: string;
-  previousStatus?: Record<string, string | number>;
+  previousStatus?: Record<string, string | number | Record<string, string | number>>;
   memory?: string;
 };
 
@@ -44,6 +50,13 @@ function safeNumber(value: unknown, fallback: number) {
 function cleanStatusNames(value: unknown) {
   if (!Array.isArray(value)) return [];
   return value.map(String).map((item) => item.trim()).filter(Boolean).slice(0, 12);
+}
+
+function recentStatusMessages(messages: StatusMessage[] | undefined) {
+  return (messages || [])
+    .slice(-8)
+    .map((message) => `${message.role === "assistant" ? "AI" : "User"}: ${clip(message.content || "", 700)}`)
+    .join("\n");
 }
 
 function chatCompletionsUrl(baseUrl: string) {
@@ -77,7 +90,8 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 
 function buildStatusPrompt(body: StatusRequest) {
   const character = body.character || {};
-  const statusRule = String(character.statusPrompt || body.statusAgent?.systemPrompt || "").trim();
+  const globalStatusRule = String(body.statusAgent?.systemPrompt || "").trim();
+  const characterStatusRule = String(character.statusPrompt || "").trim();
   const statusNames = cleanStatusNames(character.statusNames);
   const multiRoleRule = statusNames.length
     ? [
@@ -96,8 +110,11 @@ function buildStatusPrompt(body: StatusRequest) {
   ].join("\n");
 
   return [
-    statusRule ? `Status bar agent rule:\n${clip(statusRule, 1800)}` : defaultRule,
+    globalStatusRule ? `Global status bar rule:\n${clip(globalStatusRule, 1800)}` : defaultRule,
+    characterStatusRule ? `Current character status supplement rule:\n${clip(characterStatusRule, 1400)}` : "",
     multiRoleRule,
+    "Hard rules: status must match the latest plot. If a field is not changed by the latest dialogue, inherit previous status. Do not invent a new location, relationship phase, clothing, or body state.",
+    "In multi-character cards, the user's word \"you\" means the user is speaking to the listed characters, not one character speaking to another.",
     `通用智能体总规则摘要：\n${clip(body.backendAgent?.systemPrompt || "", 900)}`,
     `角色名：${clip(character.name || "角色", 80)}`,
     `角色资料：${clip(character.profile, 500)}`,
@@ -125,6 +142,8 @@ function normalizeFlatStatus(value: unknown) {
       next[key] = Math.max(0, Math.min(100, Math.round(entry)));
     } else if (typeof entry === "string") {
       next[key] = clip(entry, 40);
+    } else if (Array.isArray(entry)) {
+      next[key] = clip(entry.map(String).filter(Boolean).slice(0, 8).join("、"), 80);
     }
   }
   return next;
@@ -203,6 +222,52 @@ function fallbackStatusV2(body: StatusRequest) {
   }));
 }
 
+function buildStatusPromptV2(body: StatusRequest) {
+  const character = body.character || {};
+  const statusNames = cleanStatusNames(character.statusNames);
+  const globalStatusRule = String(body.statusAgent?.systemPrompt || "").trim();
+  const characterStatusRule = String(character.statusPrompt || "").trim();
+  const multiRoleRule = statusNames.length
+    ? [
+        "Multi-character status mode is ON.",
+        `Status character names: ${statusNames.join(", ")}`,
+        "Return status_update as an object whose top-level keys are exactly these names.",
+        "Each top-level value must be that character's own status object.",
+        "Never merge multiple characters into one shared status object."
+      ].join("\n")
+    : "Single-character status mode.";
+
+  return [
+    "You are the independent status-bar agent. Return JSON only, no Markdown, no explanation.",
+    "The status must match the latest plot and must not contradict the assistant reply.",
+    "If the latest dialogue does not change a field, inherit the previous status instead of inventing changes.",
+    "Do not invent a new location, relationship phase, clothing, posture, or emotion unless the dialogue supports it.",
+    "If a value is numeric, use 0-100. If a value is text, keep it short.",
+    "In multi-character cards, the user's word \"you\" means the user is speaking to the listed characters, not one character speaking to another.",
+    multiRoleRule,
+    globalStatusRule ? `Global status bar rule:\n${clip(globalStatusRule, 1800)}` : "",
+    characterStatusRule ? `Current character status supplement rule:\n${clip(characterStatusRule, 1400)}` : "",
+    `Backend/common agent:\n${clip(body.backendAgent?.systemPrompt || "", 900)}`,
+    `Character name: ${clip(character.name || "character", 80)}`,
+    `Character tags: ${clip((character.tags || []).join(", "), 180)}`,
+    `Character profile: ${clip(character.profile, 500)}`,
+    `Character personality: ${clip(character.personality, 420)}`,
+    `Current scene: ${clip(character.scenario, 360)}`,
+    `Character card body: ${clip(character.creatorNotes, 900)}`,
+    `World book: ${clip(character.worldBook, 500)}`,
+    `User persona: ${clip(body.userPersona || "", 360)}`,
+    `Recent dialogue context:\n${clip(recentStatusMessages(body.messages), 1800)}`,
+    `Previous status:\n${clip(JSON.stringify(body.previousStatus || {}), 1100)}`,
+    `Long-term memory:\n${clip(body.memory || "", 650)}`,
+    `Latest user message:\n${clip(body.userMessage || "", 700)}`,
+    `Latest assistant reply:\n${clip(body.assistantReply || "", 1200)}`,
+    "Return format:",
+    statusNames.length
+      ? `{"status_update":{${statusNames.map((name) => `"${name}":{"当前阶段":"...","心情":"...","位置":"...","动作":"...","对用户态度":"...","语气":"...","眼神":"...","穿着":"...","身体反应":"...","关系推进":0}`).join(",")}},"memory_update":""}`
+      : "{\"status_update\":{\"当前阶段\":\"...\",\"心情\":\"...\",\"位置\":\"...\",\"动作\":\"...\",\"对用户态度\":\"...\",\"语气\":\"...\",\"眼神\":\"...\",\"穿着\":\"...\",\"身体反应\":\"...\",\"关系推进\":0},\"memory_update\":\"\"}"
+  ].filter(Boolean).join("\n\n");
+}
+
 export async function POST(request: Request) {
   const body = (await request.json()) as StatusRequest;
   const apiKey = process.env.AI_API_KEY;
@@ -226,7 +291,7 @@ export async function POST(request: Request) {
           model,
           temperature,
           max_tokens: 360,
-          messages: [{ role: "user", content: buildStatusPrompt(body) }]
+          messages: [{ role: "user", content: buildStatusPromptV2(body) }]
         })
       },
       timeoutMs

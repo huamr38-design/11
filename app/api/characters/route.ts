@@ -29,7 +29,7 @@ function cleanCharacter(value: Partial<CharacterCard> & Record<string, unknown>)
   return {
     id,
     name,
-    tags: Array.isArray(value.tags) ? value.tags.map(String).filter(Boolean) : [],
+    tags: cleanTags(value.tags),
     avatarUrl: String(value.avatarUrl || ""),
     statusPrompt: String(value.statusPrompt || ""),
     statusNames: Array.isArray(value.statusNames) ? value.statusNames.map(String).map((item) => item.trim()).filter(Boolean).slice(0, 12) : [],
@@ -39,6 +39,11 @@ function cleanCharacter(value: Partial<CharacterCard> & Record<string, unknown>)
     creatorNotes: String(value.creatorNotes || ""),
     worldBook: String(value.worldBook || "")
   };
+}
+
+function cleanTags(value: unknown) {
+  const source = Array.isArray(value) ? value.join("\n") : String(value || "");
+  return source.split(/[\n,+&/|;:，、；：]/).map((item) => item.trim()).filter(Boolean).slice(0, 10);
 }
 
 export async function GET() {
