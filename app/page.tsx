@@ -53,6 +53,9 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   createdAt: number;
+  pendingReply?: boolean;
+  failedReply?: boolean;
+  retryText?: string;
   statusSnapshot?: StatusMap;
   statusPreviousSnapshot?: StatusMap;
   statusPending?: boolean;
@@ -936,11 +939,20 @@ export default function Home() {
     sendDraftMessage();
   }
 
-  function sendDraftMessage() {
-    const text = (composerTextareaRef.current?.value || draft).trim();
+  function sendDraftMessage(textOverride?: string) {
+    const text = (textOverride ?? composerTextareaRef.current?.value ?? draft).trim();
     if (!text || busy) return;
 
     const userMessage: ChatMessage = { id: uid("message"), role: "user", content: text, createdAt: Date.now() };
+    const assistantMessageId = uid("message");
+    const pendingAssistantMessage: ChatMessage = {
+      id: assistantMessageId,
+      role: "assistant",
+      content: "正在回复...",
+      createdAt: Date.now(),
+      pendingReply: true,
+      retryText: text
+    };
     const requestCharacter = activeCharacter;
     const requestCharacterId = requestCharacter.id;
     const requestMessages = messages;
@@ -950,6 +962,7 @@ export default function Home() {
     const requestContextMessageLimit = contextMessageLimit;
 
     appendMessageForCharacter(requestCharacterId, userMessage);
+    appendMessageForCharacter(requestCharacterId, pendingAssistantMessage);
     setDraft("");
     setBusyForCharacter(requestCharacterId, true);
     setError("");
@@ -985,14 +998,18 @@ export default function Home() {
         throw new Error(`${data?.error || "\u8bf7\u6c42\u5931\u8d25"}${timingText}`);
       }
 
+      const assistantReply = data.reply || "我在。";
       const assistantMessage: ChatMessage = {
-        id: uid("message"),
+        id: assistantMessageId,
         role: "assistant",
-        content: data.reply || "\u6211\u5728\u3002",
-        createdAt: Date.now(),
+        content: assistantReply,
+        createdAt: pendingAssistantMessage.createdAt,
+        pendingReply: false,
+        failedReply: false,
+        retryText: text,
         statusPending: true
       };
-      appendMessageForCharacter(requestCharacterId, assistantMessage);
+      updateMessageForCharacter(requestCharacterId, assistantMessageId, () => assistantMessage);
       await updateStatusAfterReply({
         characterId: requestCharacterId,
         assistantMessageId: assistantMessage.id,
@@ -1010,11 +1027,27 @@ export default function Home() {
       .catch(() => undefined)
       .then(runChatRequest)
       .catch((err) => {
-        setError(err instanceof Error ? err.message : "\u53d1\u9001\u5931\u8d25");
+        const errorMessage = err instanceof Error ? err.message : "发送失败";
+        updateMessageForCharacter(requestCharacterId, assistantMessageId, (message) => ({
+          ...message,
+          content: "这条消息模型没有成功返回。你可以点下方重试。",
+          pendingReply: false,
+          failedReply: true,
+          retryText: text,
+          statusPending: false,
+          statusError: false
+        }));
+        setError(errorMessage);
       })
       .finally(() => {
         setBusyForCharacter(requestCharacterId, false);
       });
+  }
+
+  function retryAssistantMessage(text?: string) {
+    const retryText = String(text || "").trim();
+    if (!retryText || busy) return;
+    sendDraftMessage(retryText);
   }
 
 
@@ -1197,10 +1230,11 @@ export default function Home() {
             </div>
           ) : (
             messages.map((message) => (
-              <div className={`xc-message ${message.role}`} key={message.id}>
+              <div className={`xc-message ${message.role}${message.pendingReply ? " pending-reply" : ""}${message.failedReply ? " failed-reply" : ""}`} key={message.id}>
                 <span>{message.role === "user" ? "你" : activeCharacter.name}</span>
                 <p>{renderMessageContent(message.content)}</p>
-                {message.role === "assistant" && (
+                {message.failedReply && <button type="button" className="message-retry-button" disabled={busy} onClick={() => retryAssistantMessage(message.retryText)}>{"\u91cd\u8bd5\u8fd9\u6761"}</button>}
+                {message.role === "assistant" && !message.pendingReply && !message.failedReply && (
                   message.statusPending ? (
                     <RoleStatusNotice text="状态栏生成中..." />
                   ) : message.statusError ? (
@@ -1212,7 +1246,6 @@ export default function Home() {
               </div>
             ))
           )}
-          {busy && <div className="xc-message assistant thinking"><span>{activeCharacter.name}</span><p>正在回复...</p></div>}
         </div>
 
         {error && <div className="error-line">{error}</div>}
