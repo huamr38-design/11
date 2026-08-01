@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AtSign,
   BookOpen,
   Bot,
   ChevronLeft,
@@ -28,6 +29,7 @@ type CharacterCard = {
   avatarUrl?: string;
   statusPrompt?: string;
   statusNames?: string[];
+  openingMessage?: string;
   profile: string;
   personality: string;
   scenario: string;
@@ -84,6 +86,7 @@ const starterCharacters: CharacterCard[] = [
     avatarUrl: "",
     statusPrompt: "",
     statusNames: [],
+    openingMessage: "",
     profile: "25 岁，独立设计师。外表清冷、礼貌，熟悉后会露出柔软和调皮的一面。所有设定均为成年人私密角色扮演。",
     personality: "说话自然，有情绪起伏。对话内容用中文引号，动作和心理描写用括号。保持沉浸，但不要像客服，也不要机械总结。",
     scenario: "夜晚的客厅，窗外有城市灯光。她刚洗完手坐下，像是在等你开口。",
@@ -302,11 +305,25 @@ function statusContextMessages(messages: ChatMessage[]) {
   }));
 }
 
-function normalizeCharacter(character: CharacterCard): CharacterCard {
+function cleanText(value: unknown) {
+  return typeof value === "string" ? value : String(value || "");
+}
+
+function normalizeCharacter(character: unknown): CharacterCard {
+  const raw = safeObjectRecord<unknown>(character);
   return {
-    ...character,
-    tags: cleanTags(character.tags),
-    statusNames: cleanStatusNames(character.statusNames || [])
+    id: cleanText(raw.id || uid("character")),
+    name: cleanText(raw.name || "未命名角色"),
+    tags: cleanTags(raw.tags),
+    avatarUrl: cleanText(raw.avatarUrl),
+    statusPrompt: cleanText(raw.statusPrompt),
+    statusNames: cleanStatusNames(raw.statusNames || []),
+    openingMessage: cleanText(raw.openingMessage),
+    profile: cleanText(raw.profile),
+    personality: cleanText(raw.personality),
+    scenario: cleanText(raw.scenario),
+    creatorNotes: cleanText(raw.creatorNotes),
+    worldBook: cleanText(raw.worldBook)
   };
 }
 
@@ -322,17 +339,55 @@ function safeObjectRecord<T>(value: unknown): Record<string, T> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, T> : {};
 }
 
+function normalizeStatusValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") return value;
+  if (typeof value === "boolean") return value ? "是" : "否";
+  return undefined;
+}
+
+function normalizeFlatStatusMap(value: unknown): FlatStatusMap {
+  const raw = safeObjectRecord<unknown>(value);
+  const entries: Array<[string, string | number]> = [];
+  Object.entries(raw).forEach(([key, entry]) => {
+    const next = normalizeStatusValue(entry);
+    if (next !== undefined) entries.push([String(key), next]);
+  });
+  return Object.fromEntries(entries);
+}
+
+function normalizeStatusMap(value: unknown): StatusMap {
+  const raw = safeObjectRecord<unknown>(value);
+  const flatEntries: Array<[string, string | number]> = [];
+  const groupedEntries: Array<[string, FlatStatusMap]> = [];
+
+  Object.entries(raw).forEach(([key, entry]) => {
+    const simpleValue = normalizeStatusValue(entry);
+    if (simpleValue !== undefined) {
+      flatEntries.push([String(key), simpleValue]);
+      return;
+    }
+    const group = normalizeFlatStatusMap(entry);
+    if (Object.keys(group).length) groupedEntries.push([String(key), group]);
+  });
+
+  if (groupedEntries.length && !flatEntries.length) return Object.fromEntries(groupedEntries);
+  return Object.fromEntries(flatEntries);
+}
+
 function normalizeMessage(message: unknown): ChatMessage | null {
   if (!message || typeof message !== "object") return null;
   const raw = message as Partial<ChatMessage>;
   if (raw.role !== "user" && raw.role !== "assistant") return null;
+  const statusSnapshot = normalizeStatusMap(raw.statusSnapshot);
+  const statusPreviousSnapshot = normalizeStatusMap(raw.statusPreviousSnapshot);
   return {
     id: String(raw.id || uid("message")),
     role: raw.role,
     content: String(raw.content || ""),
     createdAt: Number(raw.createdAt || Date.now()),
-    statusSnapshot: raw.statusSnapshot && typeof raw.statusSnapshot === "object" ? raw.statusSnapshot : undefined,
-    statusPreviousSnapshot: raw.statusPreviousSnapshot && typeof raw.statusPreviousSnapshot === "object" ? raw.statusPreviousSnapshot : undefined,
+    statusSnapshot: Object.keys(statusSnapshot).length ? statusSnapshot : undefined,
+    statusPreviousSnapshot: Object.keys(statusPreviousSnapshot).length ? statusPreviousSnapshot : undefined,
     statusPending: Boolean(raw.statusPending),
     statusError: Boolean(raw.statusError)
   };
@@ -344,10 +399,6 @@ function normalizeMessagesByCharacter(value: unknown) {
     key,
     Array.isArray(entry) ? entry.map(normalizeMessage).filter(Boolean) as ChatMessage[] : []
   ]));
-}
-
-function normalizeStatusMap(value: unknown): StatusMap {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as StatusMap : {};
 }
 
 function normalizeStatusByCharacter(value: unknown) {
@@ -403,7 +454,7 @@ export default function Home() {
   const [userPersona, setUserPersona] = useState("");
   const [background, setBackground] = useState<BackgroundSettings>(defaultBackground);
   const [draft, setDraft] = useState("");
-  const [busyCharacterId, setBusyCharacterId] = useState("");
+  const [busyByCharacter, setBusyByCharacter] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminToken, setAdminToken] = useState("");
@@ -418,6 +469,7 @@ export default function Home() {
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
   const userStateSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const chatRequestQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const [currentUser, setCurrentUser] = useState("");
   const [currentToken, setCurrentToken] = useState("");
   const [loginName, setLoginName] = useState("");
@@ -554,7 +606,8 @@ export default function Home() {
   const visibleStatus = activeHasStatusGroups ? (statusByCharacter[activeCharacter.id] || {}) : { ...defaultStatus, ...(statusByCharacter[activeCharacter.id] || {}) };
   const memory = memoryByCharacter[activeCharacter.id] || "";
   const contextMessageLimit = contextLimitByCharacter[activeCharacter.id] || 8;
-  const busy = busyCharacterId === activeCharacter.id;
+  const mentionNames = effectiveStatusNames(activeCharacter).length ? effectiveStatusNames(activeCharacter) : [activeCharacter.name].filter(Boolean);
+  const busy = Boolean(busyByCharacter[activeCharacter.id]);
 
   useEffect(() => {
     if (!chatOpen) return;
@@ -564,6 +617,20 @@ export default function Home() {
       chatBody.scrollTop = chatBody.scrollHeight;
     });
   }, [activeCharacterId, chatOpen, messages.length, busy]);
+
+  useEffect(() => {
+    if (!chatOpen) return;
+    if (currentUser && !accountReady) return;
+    const openingMessage = String(activeCharacter.openingMessage || "").trim();
+    if (!openingMessage || messages.length) return;
+    appendMessageForCharacter(activeCharacter.id, {
+      id: uid("opening"),
+      role: "assistant",
+      content: openingMessage,
+      createdAt: Date.now(),
+      statusPending: false
+    });
+  }, [activeCharacter.id, activeCharacter.openingMessage, chatOpen, messages.length, currentUser, accountReady]);
 
   function setActiveMessages(next: ChatMessage[]) {
     setMessagesByCharacter((current) => ({ ...current, [activeCharacter.id]: next }));
@@ -608,6 +675,15 @@ export default function Home() {
     setContextLimitByCharacter((current) => ({ ...current, [characterId]: next }));
   }
 
+  function setBusyForCharacter(characterId: string, next: boolean) {
+    setBusyByCharacter((current) => {
+      const copy = { ...current };
+      if (next) copy[characterId] = true;
+      else delete copy[characterId];
+      return copy;
+    });
+  }
+
   function cycleContextLimit() {
     const options = [4, 8, 16, 24];
     const index = options.indexOf(contextMessageLimit);
@@ -635,6 +711,29 @@ export default function Home() {
     });
   }
 
+  function insertMention(name: string) {
+    const mention = `@${name} `;
+    const textarea = composerTextareaRef.current;
+    if (!textarea) {
+      setDraft((current) => `${current}${current && !current.endsWith(" ") ? " " : ""}${mention}`);
+      return;
+    }
+
+    const sourceDraft = textarea.value || draft;
+    const start = textarea.selectionStart ?? sourceDraft.length;
+    const end = textarea.selectionEnd ?? start;
+    const needsSpaceBefore = start > 0 && sourceDraft[start - 1] !== " ";
+    const insertText = `${needsSpaceBefore ? " " : ""}${mention}`;
+    const nextDraft = `${sourceDraft.slice(0, start)}${insertText}${sourceDraft.slice(end)}`;
+    const nextCursor = start + insertText.length;
+    textarea.value = nextDraft;
+    setDraft(nextDraft);
+    window.requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(nextCursor, nextCursor);
+    });
+  }
+
   function updateDirector(next: BackendAgent) {
     setDirector(next);
     saveAgentToServer(next, adminToken);
@@ -653,6 +752,7 @@ export default function Home() {
       avatarUrl: "",
       statusPrompt: "",
       statusNames: [],
+      openingMessage: "",
       profile: "从管理员新增的角色卡。",
       personality: "",
       scenario: "私人聊天",
@@ -833,11 +933,11 @@ export default function Home() {
   }
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
-    await sendDraftMessage();
+    sendDraftMessage();
   }
 
-  async function sendDraftMessage() {
-    const text = draft.trim();
+  function sendDraftMessage() {
+    const text = (composerTextareaRef.current?.value || draft).trim();
     if (!text || busy) return;
 
     const userMessage: ChatMessage = { id: uid("message"), role: "user", content: text, createdAt: Date.now() };
@@ -851,10 +951,10 @@ export default function Home() {
 
     appendMessageForCharacter(requestCharacterId, userMessage);
     setDraft("");
-    setBusyCharacterId(requestCharacterId);
+    setBusyForCharacter(requestCharacterId, true);
     setError("");
 
-    try {
+    const runChatRequest = async () => {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -893,7 +993,7 @@ export default function Home() {
         statusPending: true
       };
       appendMessageForCharacter(requestCharacterId, assistantMessage);
-      void updateStatusAfterReply({
+      await updateStatusAfterReply({
         characterId: requestCharacterId,
         assistantMessageId: assistantMessage.id,
         character: requestCharacter,
@@ -904,18 +1004,24 @@ export default function Home() {
         memory: requestMemory,
         recentMessages: [...requestMessages, userMessage, assistantMessage]
       });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "\u53d1\u9001\u5931\u8d25");
-    } finally {
-      setBusyCharacterId((current) => (current === requestCharacterId ? "" : current));
-    }
+    };
+
+    chatRequestQueueRef.current = chatRequestQueueRef.current
+      .catch(() => undefined)
+      .then(runChatRequest)
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "\u53d1\u9001\u5931\u8d25");
+      })
+      .finally(() => {
+        setBusyForCharacter(requestCharacterId, false);
+      });
   }
 
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    void sendDraftMessage();
+    sendDraftMessage();
   }
 
   if (maintenance.enabled && !isAdmin) {
@@ -1115,6 +1221,9 @@ export default function Home() {
           <div className="composer-quick-row">
             <button type="button" onClick={() => insertComposerTemplate("“", "”")}>说话 “...”</button>
             <button type="button" onClick={() => insertComposerTemplate("（", "）")}>行动 （...）</button>
+            {mentionNames.map((name) => (
+              <button className="composer-mention-direct" type="button" key={name} onClick={() => insertMention(name)}><AtSign size={13} />{name}</button>
+            ))}
           </div>
           <div className="composer-settings-wrap">
             <button type="button" className="composer-settings-button" onClick={() => setComposerMenuOpen((value) => !value)} title="模型设定">
@@ -1470,6 +1579,7 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
         avatarUrl: String(parsed.avatarUrl || parsed.avatar || value.avatarUrl || ""),
         statusPrompt: String(parsed.statusPrompt || parsed.status_prompt || parsed.statusAgent || parsed.status_agent || parsed.status || value.statusPrompt || ""),
         statusNames: cleanStatusNames(parsed.statusNames || parsed.status_names || parsed.statusCharacters || parsed.status_characters || parsed["\u72b6\u6001\u680f\u89d2\u8272\u540d\u5355"] || value.statusNames || []),
+        openingMessage: String(parsed.openingMessage || parsed.opening_message || parsed.firstMessage || parsed.first_message || parsed.greeting || parsed["\u7b2c\u4e00\u53e5\u8bdd"] || value.openingMessage || ""),
         profile: String(parsed.profile || parsed.description || parsed.background || value.profile || ""),
         personality: String(parsed.personality || parsed.persona || parsed.speaking_style || value.personality || ""),
         scenario: String(parsed.scenario || parsed.opening_scene || value.scenario || ""),
@@ -1483,6 +1593,7 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
         tags: cleanTags(value.tags).length ? cleanTags(value.tags) : ["成年人"],
         statusPrompt: value.statusPrompt || "",
         statusNames: value.statusNames || [],
+        openingMessage: value.openingMessage || "",
         creatorNotes: text,
         profile: value.profile || "从 txt 文件导入的角色卡。",
         personality: value.personality || "沿用导入文本中的角色性格和说话方式。",
@@ -1499,6 +1610,7 @@ function CharacterEditor({ value, setValue, onDelete, canDelete, onDone }: { val
       <label>角色名<input value={value.name} onChange={(event) => setValue({ ...value, name: event.target.value })} /></label>
       <label>{"\u89d2\u8272\u6807\u7b7e"}<textarea value={cleanTags(value.tags).join("\n")} onChange={(event) => setValue({ ...value, tags: cleanTags(event.target.value) })} placeholder={"\u6bcf\u884c\u4e00\u4e2a\uff0c\u6216\u7528\u9017\u53f7\u5206\u9694\u3002\u4f8b\u5982\uff1a\u51b7\u6de1\u3001\u6162\u70ed\u3001\u591a\u89d2\u8272"} /></label>
       <label>头像 URL<input value={value.avatarUrl || ""} onChange={(event) => setValue({ ...value, avatarUrl: event.target.value })} /></label>
+      <label>第一句话<textarea value={value.openingMessage || ""} onChange={(event) => setValue({ ...value, openingMessage: event.target.value })} placeholder="用户第一次打开这个角色卡时，会自动作为角色的第一条消息发出。" /></label>
       <label className="upload-button"><BookOpen size={16} />{"\u4e0a\u4f20 .txt \u89d2\u8272\u5361\u72b6\u6001\u680f\u89c4\u5219"}<input type="file" accept=".txt,text/plain" onChange={uploadStatusPrompt} /></label>
       <label>{"\u72b6\u6001\u680f\u667a\u80fd\u4f53"}<textarea value={value.statusPrompt || ""} onChange={(event) => setValue({ ...value, statusPrompt: event.target.value })} placeholder={"\u8fd9\u5f20\u89d2\u8272\u5361\u4e13\u5c5e\u7684\u72b6\u6001\u680f\u8865\u5145\u89c4\u5219\u3002\u4f1a\u548c\u5916\u90e8\u901a\u7528\u72b6\u6001\u680f\u667a\u80fd\u4f53\u4e00\u8d77\u53d1\u7ed9 API\u3002"} /></label>
       <label>{"\u72b6\u6001\u680f\u89d2\u8272\u540d\u5355"}<textarea value={(value.statusNames || []).join("\n")} onChange={(event) => setValue({ ...value, statusNames: cleanStatusNames(event.target.value) })} placeholder={"\u6bcf\u884c\u4e00\u4e2a\u89d2\u8272\u540d\u3002\u586b\u4e86\u4ee5\u540e\uff0c\u72b6\u6001\u680f\u4f1a\u6309\u8fd9\u4e9b\u540d\u5b57\u5206\u522b\u751f\u6210\u3002"} /></label>
@@ -1549,9 +1661,11 @@ function RoleStatusNotice({ text }: { text: string }) {
 
 function RoleStatusCardV2({ characterName, status, previousStatus }: { characterName: string; status: StatusMap; previousStatus?: StatusMap }) {
   const orderedKeys = ["\u5f53\u524d\u9636\u6bb5", "\u5fc3\u60c5", "\u4f4d\u7f6e", "\u52a8\u4f5c", "\u5bf9\u7528\u6237\u6001\u5ea6", "\u8bed\u6c14", "\u773c\u795e", "\u7a7f\u7740", "\u8eab\u4f53\u53cd\u5e94"];
-  const groupedEntries = Object.entries(status).filter(([, value]) => isFlatStatusMap(value)) as Array<[string, FlatStatusMap]>;
-  const hasGroups = groupedEntries.length > 0 && groupedEntries.length === Object.keys(status).length;
-  const groups = hasGroups ? groupedEntries : [[characterName, status as FlatStatusMap] as [string, FlatStatusMap]];
+  const safeStatus = normalizeStatusMap(status);
+  const safePreviousStatus = normalizeStatusMap(previousStatus);
+  const groupedEntries = Object.entries(safeStatus).filter(([, value]) => isFlatStatusMap(value)) as Array<[string, FlatStatusMap]>;
+  const hasGroups = groupedEntries.length > 0 && groupedEntries.length === Object.keys(safeStatus).length;
+  const groups = hasGroups ? groupedEntries : [[characterName, normalizeFlatStatusMap(safeStatus)] as [string, FlatStatusMap]];
 
   function rowsFor(groupStatus: FlatStatusMap) {
     const extraKeys = Object.keys(groupStatus).filter((key) => !orderedKeys.includes(key));
@@ -1573,7 +1687,7 @@ function RoleStatusCardV2({ characterName, status, previousStatus }: { character
             <div className="role-status-list">
               {rowsFor(groupStatus).map(({ key, value }) => {
                 const percent = parsePercent(value);
-                const previousGroup = hasGroups && previousStatus && isFlatStatusMap(previousStatus[groupName]) ? previousStatus[groupName] as FlatStatusMap : previousStatus && !hasGroups && isFlatStatusMap(previousStatus) ? previousStatus as FlatStatusMap : {};
+                const previousGroup = hasGroups && isFlatStatusMap(safePreviousStatus[groupName]) ? safePreviousStatus[groupName] as FlatStatusMap : !hasGroups && isFlatStatusMap(safePreviousStatus) ? safePreviousStatus as FlatStatusMap : {};
                 const previousPercent = parsePercent(previousGroup[key]);
                 const trend = percent !== null && previousPercent !== null ? Math.sign(percent - previousPercent) : 0;
                 return (
@@ -1635,7 +1749,7 @@ function RoleStatusCard({ characterName, status }: { characterName: string; stat
   );
 }
 
-function StatusValuePills({ value }: { value: string | number }) {
+function StatusValuePills({ value }: { value: unknown }) {
   const text = String(value || "").trim();
   const parts = text
     .split(/[，、,;；|/]/)
@@ -1649,8 +1763,9 @@ function StatusValuePills({ value }: { value: string | number }) {
   );
 }
 
-function parsePercent(value: string | number) {
+function parsePercent(value: unknown) {
   if (typeof value === "number") return Math.max(0, Math.min(100, Math.round(value)));
+  if (typeof value !== "string") return null;
   const match = value.match(/\d+/);
   if (!match) return null;
   const numberValue = Number(match[0]);

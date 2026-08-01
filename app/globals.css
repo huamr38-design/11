@@ -800,6 +800,8 @@ textarea {
   gap: 8px;
   align-items: center;
   padding-left: 54px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .composer-quick-row button {
@@ -811,6 +813,53 @@ textarea {
   color: #147fbd;
   font-size: 13px;
   font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.composer-quick-row::-webkit-scrollbar {
+  display: none;
+}
+
+.composer-mention-direct {
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-mention-wrap {
+  position: relative;
+}
+
+.composer-mention-wrap > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.composer-mention-menu {
+  position: absolute;
+  left: 0;
+  bottom: 40px;
+  z-index: 25;
+  display: grid;
+  gap: 7px;
+  min-width: 132px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid rgba(57, 169, 232, 0.25);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 14px 34px rgba(35, 114, 166, 0.18);
+  backdrop-filter: blur(16px);
+}
+
+.composer-mention-menu button {
+  justify-content: flex-start;
+  min-height: 32px;
+  border-radius: 8px;
+  white-space: nowrap;
 }
 
 .composer-settings-wrap {
