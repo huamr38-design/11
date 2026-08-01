@@ -52,6 +52,34 @@ function cleanStatusNames(value: unknown) {
   return value.map(String).map((item) => item.trim()).filter(Boolean).slice(0, 12);
 }
 
+function cleanFieldName(value: string) {
+  return value
+    .replace(/^[\s\-*•·\d.、)）(（]+/, "")
+    .replace(/^[^\p{L}\p{N}_]+/u, "")
+    .replace(/[：:・|-].*$/, "")
+    .replace(/[0-9０-９]+%?$/, "")
+    .trim()
+    .slice(0, 18);
+}
+
+function extractStatusFieldNames(...rules: unknown[]) {
+  const text = rules.map((rule) => String(rule || "")).join("\n");
+  const names = new Set<string>();
+  const defaultFields = ["当前阶段", "心情", "位置", "动作", "对用户态度", "语气", "眼神", "穿着", "身体反应"];
+  const stopWords = new Set(["STATUS", "状态", "状态栏", "角色", "用户", "返回格式", "JSON", "说明", "规则", "注意", "示例"]);
+
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.length > 80) continue;
+    const match = trimmed.match(/^(.{1,24}?)(?:[：:・|]| {2,}| - | – | — )/);
+    const rawName = match ? match[1] : "";
+    const name = cleanFieldName(rawName);
+    if (name.length >= 2 && !stopWords.has(name) && !/^\d+$/.test(name)) names.add(name);
+  }
+
+  return names.size ? Array.from(names).slice(0, 18) : defaultFields;
+}
+
 function recentStatusMessages(messages: StatusMessage[] | undefined) {
   return (messages || [])
     .slice(-8)
@@ -163,6 +191,52 @@ function normalizeStatus(value: unknown, statusNames: string[]) {
   return grouped;
 }
 
+function shapeStatusFields(status: Record<string, string | number>, fields: string[], body: StatusRequest) {
+  const combined = `${body.userMessage || ""}\n${body.assistantReply || ""}`;
+  const base: Record<string, string | number> = {};
+  for (const field of fields) {
+    if (status[field] !== undefined && status[field] !== "") {
+      base[field] = status[field];
+      continue;
+    }
+    if (/度|值|系数|进度|欲望|好感|亲密|警惕|信任|恐惧|羞耻|紧张|堕落|温度/.test(field)) {
+      base[field] = Math.min(100, Math.max(0, Math.ceil(combined.length / 18)));
+    } else if (/位置|地点|场景/.test(field)) {
+      base[field] = clip(String(body.character?.scenario || "当前场景"), 40);
+    } else if (/穿|衣|服装/.test(field)) {
+      base[field] = String(status[field] || "保持角色卡设定");
+    } else if (/动作|姿态|行为/.test(field)) {
+      base[field] = combined ? "根据本轮对话继续反应" : "等待下文";
+    } else if (/眼神/.test(field)) {
+      base[field] = "专注观察";
+    } else if (/语气/.test(field)) {
+      base[field] = "贴合本轮情绪";
+    } else if (/阶段/.test(field)) {
+      base[field] = String(status[field] || "持续交流");
+    } else {
+      base[field] = String(status[field] || "随本轮剧情轻微变化");
+    }
+  }
+  return base;
+}
+
+function shapeStatusUpdate(value: unknown, body: StatusRequest) {
+  const character = body.character || {};
+  const statusNames = cleanStatusNames(character.statusNames);
+  const fields = extractStatusFieldNames(body.statusAgent?.systemPrompt, character.statusPrompt);
+  const normalized = normalizeStatus(value, statusNames);
+
+  if (!statusNames.length) {
+    return shapeStatusFields(normalizeFlatStatus(normalized), fields, body);
+  }
+
+  const raw = normalized && typeof normalized === "object" && !Array.isArray(normalized) ? normalized as Record<string, unknown> : {};
+  return Object.fromEntries(statusNames.map((name) => {
+    const group = normalizeFlatStatus(raw[name]);
+    return [name, shapeStatusFields(group, fields, body)];
+  }));
+}
+
 function clampPercent(value: unknown, fallback: number, delta: number) {
   const base = typeof value === "number" ? value : fallback;
   return Math.max(0, Math.min(100, Math.round(base + delta)));
@@ -202,6 +276,7 @@ function fallbackStatusV2(body: StatusRequest) {
   const previous = body.previousStatus || {};
   const combined = `${body.userMessage || ""}\n${body.assistantReply || ""}`;
   const changed = Math.min(10, Math.max(1, Math.ceil(combined.length / 160)));
+  const fields = extractStatusFieldNames(body.statusAgent?.systemPrompt, body.character?.statusPrompt);
   const makeOne = (prior: Record<string, string | number> = {}) => ({
     "\u5f53\u524d\u9636\u6bb5": String(prior["\u5f53\u524d\u9636\u6bb5"] || "\u6301\u7eed\u4ea4\u6d41"),
     "\u5fc3\u60c5": combined ? "\u88ab\u672c\u8f6e\u5bf9\u8bdd\u7275\u52a8" : String(prior["\u5fc3\u60c5"] || "\u5e73\u7a33"),
@@ -214,11 +289,12 @@ function fallbackStatusV2(body: StatusRequest) {
     "\u8eab\u4f53\u53cd\u5e94": String(prior["\u8eab\u4f53\u53cd\u5e94"] || "\u968f\u5267\u60c5\u8f7b\u5fae\u53d8\u5316"),
     "\u5173\u7cfb\u63a8\u8fdb": Math.max(0, Math.min(100, Number(prior["\u5173\u7cfb\u63a8\u8fdb"] || 30) + changed))
   });
+  const makeShaped = (prior: Record<string, string | number> = {}) => shapeStatusFields({ ...makeOne(prior), ...prior }, fields, body);
 
-  if (!statusNames.length) return makeOne(previous as Record<string, string | number>);
+  if (!statusNames.length) return makeShaped(previous as Record<string, string | number>);
   return Object.fromEntries(statusNames.map((name) => {
     const prior = previous[name];
-    return [name, makeOne(prior && typeof prior === "object" && !Array.isArray(prior) ? prior as Record<string, string | number> : {})];
+    return [name, makeShaped(prior && typeof prior === "object" && !Array.isArray(prior) ? prior as Record<string, string | number> : {})];
   }));
 }
 
@@ -238,15 +314,17 @@ function buildStatusPromptV2(body: StatusRequest) {
     : "Single-character status mode.";
 
   return [
+    globalStatusRule ? `Global status bar rule - highest priority:\n${clip(globalStatusRule, 2400)}` : "",
+    characterStatusRule ? `Current character status supplement rule - second priority:\n${clip(characterStatusRule, 2600)}` : "",
     "You are the independent status-bar agent. Return JSON only, no Markdown, no explanation.",
+    "Priority order: 1) Global status bar rule, 2) Current character status supplement rule, 3) previous status, 4) default safety rules.",
+    "The Global status bar rule and Current character status supplement rule are HARD output contracts. If they define fields, labels, status names, limits, or wording style, you must follow them exactly.",
     "The status must match the latest plot and must not contradict the assistant reply.",
     "If the latest dialogue does not change a field, inherit the previous status instead of inventing changes.",
     "Do not invent a new location, relationship phase, clothing, posture, or emotion unless the dialogue supports it.",
     "If a value is numeric, use 0-100. If a value is text, keep it short.",
     "In multi-character cards, the user's word \"you\" means the user is speaking to the listed characters, not one character speaking to another.",
     multiRoleRule,
-    globalStatusRule ? `Global status bar rule:\n${clip(globalStatusRule, 1800)}` : "",
-    characterStatusRule ? `Current character status supplement rule:\n${clip(characterStatusRule, 1400)}` : "",
     `Backend/common agent:\n${clip(body.backendAgent?.systemPrompt || "", 900)}`,
     `Character name: ${clip(character.name || "character", 80)}`,
     `Character tags: ${clip((character.tags || []).join(", "), 180)}`,
@@ -263,8 +341,8 @@ function buildStatusPromptV2(body: StatusRequest) {
     `Latest assistant reply:\n${clip(body.assistantReply || "", 1200)}`,
     "Return format:",
     statusNames.length
-      ? `{"status_update":{${statusNames.map((name) => `"${name}":{"当前阶段":"...","心情":"...","位置":"...","动作":"...","对用户态度":"...","语气":"...","眼神":"...","穿着":"...","身体反应":"...","关系推进":0}`).join(",")}},"memory_update":""}`
-      : "{\"status_update\":{\"当前阶段\":\"...\",\"心情\":\"...\",\"位置\":\"...\",\"动作\":\"...\",\"对用户态度\":\"...\",\"语气\":\"...\",\"眼神\":\"...\",\"穿着\":\"...\",\"身体反应\":\"...\",\"关系推进\":0},\"memory_update\":\"\"}"
+      ? `{"status_update":{${statusNames.map((name) => `"${name}":{${extractStatusFieldNames(globalStatusRule, characterStatusRule).map((field) => `"${field}":"..."`).join(",")}}`).join(",")}},"memory_update":""}`
+      : `{"status_update":{${extractStatusFieldNames(globalStatusRule, characterStatusRule).map((field) => `"${field}":"..."`).join(",")}},"memory_update":""}`
   ].filter(Boolean).join("\n\n");
 }
 
@@ -290,7 +368,7 @@ export async function POST(request: Request) {
         body: JSON.stringify({
           model,
           temperature,
-          max_tokens: 360,
+          max_tokens: 900,
           messages: [{ role: "user", content: buildStatusPromptV2(body) }]
         })
       },
@@ -307,7 +385,7 @@ export async function POST(request: Request) {
     if (!parsed) {
       return NextResponse.json({ statusUpdate: fallbackStatusV2(body), memoryUpdate: "" });
     }
-    const statusUpdate = normalizeStatus(parsed.status_update || parsed.statusUpdate, cleanStatusNames(body.character?.statusNames));
+    const statusUpdate = shapeStatusUpdate(parsed.status_update || parsed.statusUpdate, body);
 
     return NextResponse.json({
       statusUpdate: Object.keys(statusUpdate).length ? statusUpdate : fallbackStatusV2(body),
