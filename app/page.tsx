@@ -983,14 +983,27 @@ export default function Home() {
           userMessage: text
         })
       });
-      const data = await response.json().catch(() => null);
+      const isStream = response.headers.get("content-type")?.includes("text/event-stream");
+      let data: { reply?: string; error?: string; timing?: Record<string, unknown> } | null = null;
+      if (response.ok && isStream) {
+        data = await readStreamingReply(response, (chunk) => {
+          updateMessageForCharacter(requestCharacterId, assistantMessageId, (message) => ({
+            ...message,
+            content: message.pendingReply && message.content === "正在回复..." ? chunk : `${message.content}${chunk}`,
+            pendingReply: true
+          }));
+        });
+      } else {
+        data = await response.json().catch(() => null);
+      }
+
       if (!response.ok) {
         const timing = data?.timing;
         const timingParts = timing
           ? [
-              timing.serverTotalMs ? `server ${Math.round(timing.serverTotalMs / 1000)}s` : "",
-              timing.upstreamMs ? `upstream ${Math.round(timing.upstreamMs / 1000)}s` : "",
-              timing.requestBytes ? `request ${Math.max(1, Math.round(timing.requestBytes / 1024))} KB` : "",
+              typeof timing.serverTotalMs === "number" ? `server ${Math.round(timing.serverTotalMs / 1000)}s` : "",
+              typeof timing.upstreamMs === "number" ? `upstream ${Math.round(timing.upstreamMs / 1000)}s` : "",
+              typeof timing.requestBytes === "number" ? `request ${Math.max(1, Math.round(timing.requestBytes / 1024))} KB` : "",
               timing.fallbackUsed ? "fallback used" : ""
             ].filter(Boolean)
           : [];
@@ -998,6 +1011,7 @@ export default function Home() {
         throw new Error(`${data?.error || "\u8bf7\u6c42\u5931\u8d25"}${timingText}`);
       }
 
+      if (!data) throw new Error("模型没有返回内容。");
       const assistantReply = data.reply || "我在。";
       const assistantMessage: ChatMessage = {
         id: assistantMessageId,
@@ -1048,6 +1062,44 @@ export default function Home() {
     const retryText = String(text || "").trim();
     if (!retryText || busy) return;
     sendDraftMessage(retryText);
+  }
+
+  async function readStreamingReply(response: Response, onDelta: (text: string) => void) {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("模型没有返回可读取的流。");
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let reply = "";
+    let timing: Record<string, unknown> | undefined;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+
+      for (const eventText of events) {
+        const dataLine = eventText.split(/\r?\n/).find((line) => line.startsWith("data:"));
+        if (!dataLine) continue;
+        const raw = dataLine.slice(5).trim();
+        if (!raw) continue;
+        const event = JSON.parse(raw) as { type?: string; text?: string; reply?: string; error?: string; timing?: Record<string, unknown> };
+        if (event.type === "delta" && event.text) {
+          reply += event.text;
+          onDelta(event.text);
+        }
+        if (event.type === "done") {
+          timing = event.timing;
+          return { reply: event.reply || reply, timing };
+        }
+        if (event.type === "error") {
+          throw new Error(event.error || "模型流式返回中断。");
+        }
+      }
+    }
+
+    return { reply, timing };
   }
 
 
