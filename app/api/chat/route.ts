@@ -260,9 +260,9 @@ export async function POST(request: Request) {
   const configuredWireApi = process.env.AI_WIRE_API || "chat";
   const wireApi = model?.toLowerCase().includes("grok") ? "chat" : configuredWireApi;
   const maxTokens = Math.max(400, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 1000)));
-  const timeoutMs = Math.max(15000, Math.min(48000, safeNumber(process.env.AI_TIMEOUT_MS, 45000)));
+  const timeoutMs = Math.max(12000, Math.min(30000, safeNumber(process.env.AI_TIMEOUT_MS, 28000)));
   const primaryTimeoutMs = timeoutMs;
-  const rescueTimeoutMs = 10000;
+  const rescueTimeoutMs = 0;
   const fastSystemPrompt = buildFastSystemPrompt(body);
   const fullSystemPrompt = buildSystemPrompt(body);
   const timing: ChatTiming = {
@@ -327,6 +327,7 @@ export async function POST(request: Request) {
     } catch (primaryError) {
       const primaryTimedOut = primaryError instanceof Error && primaryError.name === "AbortError";
       if (primaryTimedOut) timing.errorName = primaryError.name;
+      if (primaryTimedOut && wireApi === "chat") throw primaryError;
       if (!primaryTimedOut || wireApi !== "chat") throw primaryError;
       timing.fallbackUsed = true;
       const fallbackStart = Date.now();
@@ -351,7 +352,7 @@ export async function POST(request: Request) {
     timing.upstreamMs = Date.now() - upstreamStart;
     timing.upstreamStatus = upstream.status;
 
-    if (!upstream.ok && wireApi === "chat" && shouldRetryUpstream(upstream.status)) {
+    if (!upstream.ok && wireApi === "chat" && rescueTimeoutMs > 0 && shouldRetryUpstream(upstream.status)) {
       timing.fallbackUsed = true;
       const fallbackStart = Date.now();
       const rescuePrompt = buildRescueSystemPrompt(body);
