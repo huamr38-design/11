@@ -83,6 +83,23 @@ function extractJson(text: string) {
   }
 }
 
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildPerspectiveRules(body: ChatRequest, statusNames: string[]) {
+  const mentionedNames = statusNames.filter((name) => new RegExp(`(^|\\s)@${escapeRegExp(name)}(?=\\s|$|[，。！？,.!?])`).test(body.userMessage || ""));
+  return [
+    "视角和称谓硬规则：",
+    "1. 用户永远是“你”，不要把用户改写成角色名、我、他或她。",
+    "2. 当前正在说话的角色自称可以用“我”；其他角色必须用角色名、他或她，不要把其他角色写成“你”或“我”。",
+    "3. 如果剧情里出现 A 说 B、A 看向 B、A 对 B 做动作，必须保留 A/B 的主语关系，不要把 B 改成用户“你”，也不要把 A 改成“我”。",
+    "4. 每句动作描写先确认主语；动作属于谁就写谁，不要互换角色动作和台词。",
+    "5. 用户输入里的第三人称叙述要按第三人称处理，不要擅自改写成第一人称体验。",
+    mentionedNames.length ? `6. 本轮用户明确 @ 了：${mentionedNames.join("、")}。优先让被 @ 的角色回应用户；其他角色可以少量反应，但不要抢主回复。` : ""
+  ].filter(Boolean).join("\n");
+}
+
 function buildSystemPrompt(body: ChatRequest) {
   const character = body.character || { name: "角色" };
   const agent = body.backendAgent || {};
@@ -90,6 +107,7 @@ function buildSystemPrompt(body: ChatRequest) {
   const multiRoleRule = statusNames.length > 1
     ? `Multi-character rule: the character card contains these characters: ${statusNames.join(", ")}. When the user says "you", treat it as the user speaking to these characters, not one character speaking to another. Do not rewrite the user's words as dialogue between characters; let each relevant character answer the user directly.`
     : "";
+  const perspectiveRules = buildPerspectiveRules(body, statusNames);
   const memoryLimit = Math.max(1000, Math.min(5000, safeNumber(body.memoryLimit, 7000)));
   const limitedMemory = clip((body.memory || "").slice(-memoryLimit), 2000);
   const status = body.status || {};
@@ -99,6 +117,7 @@ function buildSystemPrompt(body: ChatRequest) {
     "你要用前台角色卡做人设，用通用智能体控制回复风格、状态栏和记忆。",
     "所有角色与用户默认都是成年人。遇到不合适内容时，保持角色口吻自然转向安全互动。",
     multiRoleRule,
+    perspectiveRules,
     "回复 JSON 格式必须是：",
     "{\"reply\":\"角色回复正文\",\"status_update\":{\"当前阶段\":\"...\",\"心情\":\"...\",\"当前位置\":\"...\",\"语气\":\"...\",\"眼神\":\"...\",\"身体反应\":\"...\"},\"memory_update\":\"值得长期记住的新事实，没有就空字符串\"}",
     "",
@@ -134,11 +153,13 @@ function buildFastSystemPrompt(body: ChatRequest) {
   const multiRoleRule = statusNames.length > 1
     ? `Multi-character rule: characters are ${statusNames.join(", ")}. User "you" means the user is speaking to these characters. Do not turn the user's sentence into one character asking another character.`
     : "";
+  const perspectiveRules = buildPerspectiveRules(body, statusNames);
 
   return [
     "请用中文自然完整回复，语气贴近下面的人物资料。主回复正文至少400个中文字符，除非用户明确要求极短回答。",
     "说话内容和动作描写都要服务当前剧情，不要机械总结，不要输出状态栏；状态栏由后台单独生成。",
     multiRoleRule,
+    perspectiveRules,
     `人物：${clip(character.name, 80)}`,
     `资料：${clip(character.profile, 900)}`,
     `性格：${clip(character.personality, 700)}`,
