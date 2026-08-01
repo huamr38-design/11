@@ -604,6 +604,26 @@ textarea {
   color: #111827;
 }
 
+.xc-message.pending-reply > p {
+  color: #5f7f95;
+}
+
+.xc-message.failed-reply > p {
+  border-color: rgba(239, 68, 68, 0.34);
+  background: rgba(255, 255, 255, 0.84);
+  color: #9f3a2f;
+}
+
+.message-retry-button {
+  margin-top: 8px;
+  padding: 7px 12px;
+  border: 1px solid rgba(56, 165, 226, 0.48);
+  border-radius: 8px;
+  background: rgba(235, 248, 255, 0.9);
+  color: #0877b8;
+  font-size: 13px;
+}
+
 .dialogue-text {
   color: #128fe3;
   font-weight: 700;
