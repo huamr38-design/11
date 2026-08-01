@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const preferredRegion = "iad1";
-export const maxDuration = 60;
+export const maxDuration = 70;
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -245,6 +245,98 @@ function chatRequestInit(apiKey: string, body: string): RequestInit {
   };
 }
 
+function sseMessage(value: unknown) {
+  return `data: ${JSON.stringify(value)}\n\n`;
+}
+
+function parseStreamDelta(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "[DONE]") return { done: trimmed === "[DONE]", text: "" };
+  try {
+    const data = JSON.parse(trimmed);
+    const choice = data?.choices?.[0];
+    const text =
+      choice?.delta?.content ||
+      choice?.message?.content ||
+      data?.delta ||
+      data?.text ||
+      data?.content ||
+      "";
+    return { done: Boolean(choice?.finish_reason), text: typeof text === "string" ? text : "" };
+  } catch {
+    return { done: false, text: trimmed };
+  }
+}
+
+function streamUpstreamResponse(upstream: Response, timing: ChatTiming, serverStart: number) {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const reader = upstream.body?.getReader();
+
+  if (!reader) {
+    return NextResponse.json({ error: "模型没有返回可读取的流。", timing }, { status: 502 });
+  }
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      let buffer = "";
+      let reply = "";
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() || "";
+
+          for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (!line || line.startsWith(":")) continue;
+            const payload = line.startsWith("data:") ? line.slice(5).trim() : line;
+            const parsed = parseStreamDelta(payload);
+            if (parsed.text) {
+              reply += parsed.text;
+              controller.enqueue(encoder.encode(sseMessage({ type: "delta", text: parsed.text })));
+            }
+            if (parsed.done) {
+              timing.serverTotalMs = Date.now() - serverStart;
+              controller.enqueue(encoder.encode(sseMessage({ type: "done", reply, timing })));
+              controller.close();
+              return;
+            }
+          }
+        }
+
+        if (buffer.trim()) {
+          const payload = buffer.trim().startsWith("data:") ? buffer.trim().slice(5).trim() : buffer.trim();
+          const parsed = parseStreamDelta(payload);
+          if (parsed.text) {
+            reply += parsed.text;
+            controller.enqueue(encoder.encode(sseMessage({ type: "delta", text: parsed.text })));
+          }
+        }
+
+        timing.serverTotalMs = Date.now() - serverStart;
+        controller.enqueue(encoder.encode(sseMessage({ type: "done", reply, timing })));
+        controller.close();
+      } catch (error) {
+        timing.errorName = error instanceof Error ? error.name : "StreamError";
+        timing.serverTotalMs = Date.now() - serverStart;
+        controller.enqueue(encoder.encode(sseMessage({ type: "error", error: "模型流式返回中断。", timing })));
+        controller.close();
+      }
+    }
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive"
+    }
+  });
+}
+
 function shouldRetryUpstream(status: number) {
   return status === 429 || status === 502 || status === 503 || status === 504;
 }
@@ -260,7 +352,7 @@ export async function POST(request: Request) {
   const configuredWireApi = process.env.AI_WIRE_API || "chat";
   const wireApi = model?.toLowerCase().includes("grok") ? "chat" : configuredWireApi;
   const maxTokens = Math.max(400, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 1000)));
-  const timeoutMs = Math.max(12000, Math.min(30000, safeNumber(process.env.AI_TIMEOUT_MS, 28000)));
+  const timeoutMs = Math.max(12000, Math.min(70000, safeNumber(process.env.AI_TIMEOUT_MS, 70000)));
   const primaryTimeoutMs = timeoutMs;
   const rescueTimeoutMs = 0;
   const fastSystemPrompt = buildFastSystemPrompt(body);
@@ -309,6 +401,30 @@ export async function POST(request: Request) {
             ]
           });
     timing.requestBytes = new TextEncoder().encode(upstreamBody).length;
+    if (wireApi === "chat") {
+      const streamBody = JSON.stringify({ ...JSON.parse(upstreamBody), stream: true });
+      timing.requestBytes = new TextEncoder().encode(streamBody).length;
+      const streamStarted = Date.now();
+      const streamUpstream = await fetchWithTimeout(
+        chatCompletionsUrl(baseUrl),
+        chatRequestInit(apiKey, streamBody),
+        primaryTimeoutMs
+      );
+      timing.upstreamMs = Date.now() - streamStarted;
+      timing.upstreamStatus = streamUpstream.status;
+
+      if (!streamUpstream.ok) {
+        const text = await streamUpstream.text();
+        timing.serverTotalMs = Date.now() - serverStart;
+        return NextResponse.json(
+          { error: `模型接口返回错误：${streamUpstream.status}`, detail: text.slice(0, 800), timing },
+          { status: 502 }
+        );
+      }
+
+      return streamUpstreamResponse(streamUpstream, timing, serverStart);
+    }
+
     let upstream: Response;
     let rescueBody = "";
     try {
