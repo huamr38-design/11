@@ -36,6 +36,7 @@ type BackendAgent = {
 type ChatRequest = {
   character: CharacterCard;
   backendAgent?: BackendAgent;
+  statusAgent?: BackendAgent;
   userPersona?: string;
   messages?: ChatMessage[];
   status?: Record<string, string | number>;
@@ -103,6 +104,7 @@ function buildPerspectiveRules(body: ChatRequest, statusNames: string[]) {
 function buildSystemPrompt(body: ChatRequest) {
   const character = body.character || { name: "角色" };
   const agent = body.backendAgent || {};
+  const statusInstruction = statusMarkerInstruction(body);
   const statusNames = Array.isArray(character.statusNames) ? character.statusNames.map(String).filter(Boolean) : [];
   const multiRoleRule = statusNames.length > 1
     ? `Multi-character rule: the character card contains these characters: ${statusNames.join(", ")}. When the user says "you", treat it as the user speaking to these characters, not one character speaking to another. Do not rewrite the user's words as dialogue between characters; let each relevant character answer the user directly.`
@@ -149,6 +151,7 @@ function buildSystemPrompt(body: ChatRequest) {
 function buildFastSystemPrompt(body: ChatRequest) {
   const character = body.character || { name: "角色" };
   const agent = body.backendAgent || {};
+  const statusInstruction = statusMarkerInstruction(body);
   const statusNames = Array.isArray(character.statusNames) ? character.statusNames.map(String).filter(Boolean) : [];
   const multiRoleRule = statusNames.length > 1
     ? `Multi-character rule: characters are ${statusNames.join(", ")}. User "you" means the user is speaking to these characters. Do not turn the user's sentence into one character asking another character.`
@@ -157,7 +160,8 @@ function buildFastSystemPrompt(body: ChatRequest) {
 
   return [
     "请用中文自然完整回复，语气贴近下面的人物资料。主回复正文至少400个中文字符，除非用户明确要求极短回答。",
-    "说话内容和动作描写都要服务当前剧情，不要机械总结，不要输出状态栏；状态栏由后台单独生成。",
+    "说话内容和动作描写都要服务当前剧情，不要机械总结。",
+    statusInstruction,
     multiRoleRule,
     perspectiveRules,
     `人物：${clip(character.name, 80)}`,
@@ -167,6 +171,7 @@ function buildFastSystemPrompt(body: ChatRequest) {
     `作者设定：${clip(character.creatorNotes, 500)}`,
     `风格：${clip([agent.systemPrompt, agent.replyStyle].filter(Boolean).join("\n"), 1200)}`,
     `用户：${clip(body.userPersona || "", 300)}`,
+    `当前状态栏：${clip(JSON.stringify(body.status || {}), 1200)}`,
     `记忆：${clip(body.memory || "", 700)}`
   ].join("\n");
 }
@@ -249,6 +254,68 @@ function sseMessage(value: unknown) {
   return `data: ${JSON.stringify(value)}\n\n`;
 }
 
+const STATUS_OPEN_MARKER = "<APP_STATUS_JSON>";
+const STATUS_CLOSE_MARKER = "</APP_STATUS_JSON>";
+
+function statusMarkerInstruction(body: ChatRequest) {
+  const character = body.character || { name: "角色" };
+  const statusAgent = body.statusAgent || {};
+  const statusRule = String(character.statusPrompt || "").trim()
+    || String(statusAgent.systemPrompt || statusAgent.statusRule || statusAgent.replyStyle || "").trim()
+    || "根据本轮剧情更新状态栏。";
+
+  return [
+    "状态栏生成规则：",
+    statusRule,
+    "状态栏必须写本轮剧情后的具体结果，不要原样输出规则文字，例如不要写“随剧情变化”“保持原设定”这种规则句。",
+    "不要在聊天正文开头或正文中写“状态栏”“当前阶段：”“好感度：”等状态栏文字；这些只能放进最后的隐藏 JSON。",
+    "状态栏字段优先沿用“当前状态栏”里的字段名；数值字段输出 0-100 的数字，文字字段输出具体状态。",
+    `正文结束后，在最后单独追加一行：${STATUS_OPEN_MARKER}{\"status_update\":{},\"memory_update\":\"\"}${STATUS_CLOSE_MARKER}`,
+    "标记里的 JSON 只给系统读取，不要在正文里解释它。"
+  ].join("\n");
+}
+
+function parseCombinedReply(text: string) {
+  const openIndex = text.indexOf(STATUS_OPEN_MARKER);
+  const closeIndex = text.indexOf(STATUS_CLOSE_MARKER, openIndex + STATUS_OPEN_MARKER.length);
+  let reply = text;
+  let metaText = "";
+
+  if (openIndex >= 0) {
+    reply = text.slice(0, openIndex);
+    metaText = closeIndex >= 0
+      ? text.slice(openIndex + STATUS_OPEN_MARKER.length, closeIndex)
+      : text.slice(openIndex + STATUS_OPEN_MARKER.length);
+  } else {
+    const parsed = extractJson(text) as { reply?: string; status_update?: unknown; statusUpdate?: unknown; memory_update?: string; memoryUpdate?: string } | null;
+    if (parsed?.reply) {
+      return {
+        reply: parsed.reply,
+        statusUpdate: parsed.status_update || parsed.statusUpdate || {},
+        memoryUpdate: parsed.memory_update || parsed.memoryUpdate || ""
+      };
+    }
+  }
+
+  const parsed = extractJson(metaText) as { status_update?: unknown; statusUpdate?: unknown; memory_update?: string; memoryUpdate?: string } | null;
+  return {
+    reply: stripInlineStatusBlock(reply),
+    statusUpdate: parsed?.status_update || parsed?.statusUpdate || {},
+    memoryUpdate: parsed?.memory_update || parsed?.memoryUpdate || ""
+  };
+}
+
+function stripInlineStatusBlock(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  const lines = trimmed.split(/\r?\n/);
+  if (!/^【?状态栏】?/i.test(lines[0].trim())) return trimmed;
+  const firstBlank = lines.findIndex((line, index) => index > 0 && !line.trim());
+  if (firstBlank >= 0 && firstBlank < lines.length - 1) return lines.slice(firstBlank + 1).join("\n").trim();
+  const replyStart = lines.findIndex((line, index) => index > 0 && !/[:：]/.test(line) && line.trim().length > 12);
+  return replyStart > 0 ? lines.slice(replyStart).join("\n").trim() : "";
+}
+
 function parseStreamDelta(value: string) {
   const trimmed = value.trim();
   if (!trimmed || trimmed === "[DONE]") return { done: trimmed === "[DONE]", text: "" };
@@ -280,8 +347,34 @@ function streamUpstreamResponse(upstream: Response, timing: ChatTiming, serverSt
   const stream = new ReadableStream({
     async start(controller) {
       let buffer = "";
-      let reply = "";
+      let rawReply = "";
+      let emittedLength = 0;
       try {
+        const emitVisibleText = () => {
+          const markerIndex = rawReply.indexOf(STATUS_OPEN_MARKER);
+          const visibleEnd = markerIndex >= 0
+            ? markerIndex
+            : Math.max(0, rawReply.length - STATUS_OPEN_MARKER.length + 1);
+          if (visibleEnd <= emittedLength) return;
+          const nextText = rawReply.slice(emittedLength, visibleEnd);
+          emittedLength = visibleEnd;
+          if (nextText) controller.enqueue(encoder.encode(sseMessage({ type: "delta", text: nextText })));
+        };
+
+        const finish = () => {
+          const parsedReply = parseCombinedReply(rawReply);
+          const reply = parsedReply.reply || rawReply.slice(0, emittedLength).trim();
+          timing.serverTotalMs = Date.now() - serverStart;
+          controller.enqueue(encoder.encode(sseMessage({
+            type: "done",
+            reply,
+            statusUpdate: parsedReply.statusUpdate || {},
+            memoryUpdate: parsedReply.memoryUpdate || "",
+            timing
+          })));
+          controller.close();
+        };
+
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -295,13 +388,11 @@ function streamUpstreamResponse(upstream: Response, timing: ChatTiming, serverSt
             const payload = line.startsWith("data:") ? line.slice(5).trim() : line;
             const parsed = parseStreamDelta(payload);
             if (parsed.text) {
-              reply += parsed.text;
-              controller.enqueue(encoder.encode(sseMessage({ type: "delta", text: parsed.text })));
+              rawReply += parsed.text;
+              emitVisibleText();
             }
             if (parsed.done) {
-              timing.serverTotalMs = Date.now() - serverStart;
-              controller.enqueue(encoder.encode(sseMessage({ type: "done", reply, timing })));
-              controller.close();
+              finish();
               return;
             }
           }
@@ -311,14 +402,12 @@ function streamUpstreamResponse(upstream: Response, timing: ChatTiming, serverSt
           const payload = buffer.trim().startsWith("data:") ? buffer.trim().slice(5).trim() : buffer.trim();
           const parsed = parseStreamDelta(payload);
           if (parsed.text) {
-            reply += parsed.text;
-            controller.enqueue(encoder.encode(sseMessage({ type: "delta", text: parsed.text })));
+            rawReply += parsed.text;
+            emitVisibleText();
           }
         }
 
-        timing.serverTotalMs = Date.now() - serverStart;
-        controller.enqueue(encoder.encode(sseMessage({ type: "done", reply, timing })));
-        controller.close();
+        finish();
       } catch (error) {
         timing.errorName = error instanceof Error ? error.name : "StreamError";
         timing.serverTotalMs = Date.now() - serverStart;

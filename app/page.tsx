@@ -472,7 +472,6 @@ export default function Home() {
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
   const userStateSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
-  const chatRequestQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const [currentUser, setCurrentUser] = useState("");
   const [currentToken, setCurrentToken] = useState("");
   const [loginName, setLoginName] = useState("");
@@ -934,6 +933,19 @@ export default function Home() {
       }));
     }
   }
+
+  function mergeStatusUpdate(previousStatus: StatusMap, statusUpdate: unknown) {
+    const normalizedUpdate = normalizeStatusMap(statusUpdate);
+    if (!Object.keys(normalizedUpdate).length) return previousStatus;
+    if (isGroupedStatusMap(normalizedUpdate)) {
+      return Object.fromEntries(Object.entries(normalizedUpdate).map(([name, groupStatus]) => {
+        const previousGroup = isFlatStatusMap(previousStatus[name]) ? previousStatus[name] as FlatStatusMap : {};
+        return [name, { ...previousGroup, ...groupStatus }];
+      }));
+    }
+    return { ...previousStatus, ...normalizedUpdate };
+  }
+
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
     sendDraftMessage();
@@ -974,6 +986,7 @@ export default function Home() {
         body: JSON.stringify({
           character: compactCharacterForChat(requestCharacter),
           backendAgent: compactDirectorForChat(director),
+          statusAgent: compactDirectorForChat(statusAgent),
           userPersona: requestUserPersona,
           messages: requestMessages,
           status: requestStatus,
@@ -984,7 +997,7 @@ export default function Home() {
         })
       });
       const isStream = response.headers.get("content-type")?.includes("text/event-stream");
-      let data: { reply?: string; error?: string; timing?: Record<string, unknown> } | null = null;
+      let data: { reply?: string; statusUpdate?: StatusMap; memoryUpdate?: string; error?: string; timing?: Record<string, unknown> } | null = null;
       if (response.ok && isStream) {
         data = await readStreamingReply(response, (chunk) => {
           updateMessageForCharacter(requestCharacterId, assistantMessageId, (message) => ({
@@ -1013,6 +1026,8 @@ export default function Home() {
 
       if (!data) throw new Error("模型没有返回内容。");
       const assistantReply = data.reply || "我在。";
+      const nextStatus = mergeStatusUpdate(requestStatus, data.statusUpdate);
+      const hasStatusUpdate = Object.keys(normalizeStatusMap(data.statusUpdate)).length > 0;
       const assistantMessage: ChatMessage = {
         id: assistantMessageId,
         role: "assistant",
@@ -1021,25 +1036,19 @@ export default function Home() {
         pendingReply: false,
         failedReply: false,
         retryText: text,
-        statusPending: true
+        statusSnapshot: nextStatus,
+        statusPreviousSnapshot: requestStatus,
+        statusPending: false,
+        statusError: !hasStatusUpdate
       };
       updateMessageForCharacter(requestCharacterId, assistantMessageId, () => assistantMessage);
-      await updateStatusAfterReply({
-        characterId: requestCharacterId,
-        assistantMessageId: assistantMessage.id,
-        character: requestCharacter,
-        userPersona: requestUserPersona,
-        userMessage: text,
-        assistantReply: assistantMessage.content,
-        previousStatus: requestStatus,
-        memory: requestMemory,
-        recentMessages: [...requestMessages, userMessage, assistantMessage]
-      });
+      setStatusForCharacter(requestCharacterId, nextStatus);
+      if (data.memoryUpdate) {
+        setMemoryForCharacter(requestCharacterId, [requestMemory, data.memoryUpdate].filter(Boolean).join("\n"));
+      }
     };
 
-    chatRequestQueueRef.current = chatRequestQueueRef.current
-      .catch(() => undefined)
-      .then(runChatRequest)
+    void runChatRequest()
       .catch((err) => {
         const errorMessage = err instanceof Error ? err.message : "发送失败";
         updateMessageForCharacter(requestCharacterId, assistantMessageId, (message) => ({
@@ -1071,6 +1080,8 @@ export default function Home() {
     let buffer = "";
     let reply = "";
     let timing: Record<string, unknown> | undefined;
+    let statusUpdate: StatusMap | undefined;
+    let memoryUpdate = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -1084,14 +1095,16 @@ export default function Home() {
         if (!dataLine) continue;
         const raw = dataLine.slice(5).trim();
         if (!raw) continue;
-        const event = JSON.parse(raw) as { type?: string; text?: string; reply?: string; error?: string; timing?: Record<string, unknown> };
+        const event = JSON.parse(raw) as { type?: string; text?: string; reply?: string; statusUpdate?: StatusMap; memoryUpdate?: string; error?: string; timing?: Record<string, unknown> };
         if (event.type === "delta" && event.text) {
           reply += event.text;
           onDelta(event.text);
         }
         if (event.type === "done") {
           timing = event.timing;
-          return { reply: event.reply || reply, timing };
+          statusUpdate = event.statusUpdate;
+          memoryUpdate = event.memoryUpdate || "";
+          return { reply: event.reply || reply, statusUpdate, memoryUpdate, timing };
         }
         if (event.type === "error") {
           throw new Error(event.error || "模型流式返回中断。");
@@ -1099,7 +1112,7 @@ export default function Home() {
       }
     }
 
-    return { reply, timing };
+    return { reply, statusUpdate, memoryUpdate, timing };
   }
 
 
