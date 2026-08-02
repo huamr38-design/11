@@ -938,10 +938,13 @@ export default function Home() {
     const normalizedUpdate = normalizeStatusMap(statusUpdate);
     if (!Object.keys(normalizedUpdate).length) return previousStatus;
     if (isGroupedStatusMap(normalizedUpdate)) {
-      return Object.fromEntries(Object.entries(normalizedUpdate).map(([name, groupStatus]) => {
+      return {
+        ...previousStatus,
+        ...Object.fromEntries(Object.entries(normalizedUpdate).map(([name, groupStatus]) => {
         const previousGroup = isFlatStatusMap(previousStatus[name]) ? previousStatus[name] as FlatStatusMap : {};
         return [name, { ...previousGroup, ...groupStatus }];
-      }));
+        }))
+      };
     }
     return { ...previousStatus, ...normalizedUpdate };
   }

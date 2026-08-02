@@ -118,6 +118,7 @@ function buildSystemPrompt(body: ChatRequest) {
     "你是一个私有角色聊天网站的后端导演。只输出 JSON，不要 Markdown，不要解释规则。",
     "你要用前台角色卡做人设，用通用智能体控制回复风格、状态栏和记忆。",
     "所有角色与用户默认都是成年人。遇到不合适内容时，保持角色口吻自然转向安全互动。",
+    statusInstruction,
     multiRoleRule,
     perspectiveRules,
     "回复 JSON 格式必须是：",
