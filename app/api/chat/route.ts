@@ -160,7 +160,7 @@ function buildFastSystemPrompt(body: ChatRequest) {
   const perspectiveRules = buildPerspectiveRules(body, statusNames);
 
   return [
-    "请用中文自然完整回复，语气贴近下面的人物资料。主回复正文至少400个中文字符，除非用户明确要求极短回答。",
+    "请用中文自然完整回复，语气贴近下面的人物资料。主回复正文控制在500到900个中文字符，除非用户明确要求极短回答。",
     "说话内容和动作描写都要服务当前剧情，不要机械总结。",
     statusInstruction,
     multiRoleRule,
@@ -441,7 +441,7 @@ export async function POST(request: Request) {
   const temperature = safeNumber(process.env.AI_TEMPERATURE, 0.85);
   const configuredWireApi = process.env.AI_WIRE_API || "chat";
   const wireApi = model?.toLowerCase().includes("grok") ? "chat" : configuredWireApi;
-  const maxTokens = Math.max(400, Math.min(2500, safeNumber(process.env.AI_MAX_TOKENS, 1000)));
+  const maxTokens = Math.max(800, Math.min(3000, safeNumber(process.env.AI_MAX_TOKENS, 1800)));
   const timeoutMs = Math.max(12000, Math.min(70000, safeNumber(process.env.AI_TIMEOUT_MS, 70000)));
   const primaryTimeoutMs = timeoutMs;
   const rescueTimeoutMs = 0;
